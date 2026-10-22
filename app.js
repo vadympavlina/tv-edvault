@@ -3,6 +3,7 @@
 
   var STORAGE_KEY = "tv-schedule:launched";
   var SETTINGS_CACHE_KEY = "tv-schedule:settings";
+  var OVERRIDE_CACHE_KEY = "tv-schedule:override";
   var STATIC_SETTINGS_EVERY_MS = 5 * 60 * 1000;
   var STALE_MIN_MS = 30 * 60 * 1000;
   var SCREEN_ID_KEY = "tv-schedule:screen-id";
@@ -13,6 +14,8 @@
   var SETTLE_MS = 1200;
   var SPLASH_MAX_WAIT_MS = 12 * 1000;
   var NIGHT_HINT_MS = 5000;
+  var PROBE_TIMEOUT_MS = 8000;
+  var NET_RETRY_MS = 30 * 1000;
 
   var config = readConfig();
   // Inside the shell (index.html) fullscreen, keep-awake and restarts belong to it.
@@ -44,8 +47,11 @@
   var countdownTimer = null;
   var nightHintTimer = null;
   var splashDone = false;
-  var settings = cachedSettings();
+  var settings = cached(SETTINGS_CACHE_KEY, Schedule.normalize, Schedule.defaults());
+  var override = cached(OVERRIDE_CACHE_KEY, Schedule.normalizeOverride, null);
   var link = null;
+  var probing = false;
+  var waitingNet = false;
   var stale = false; // the schedule has not refreshed for a long time
   var dayStartedAt = 0;
   var clockOffset = 0; // server time minus this TV's clock
@@ -109,25 +115,40 @@
     return t;
   }
 
+  // Saved settings plus the manual "now" override from the settings page.
+  function effective() {
+    return { days: settings.days, exceptions: settings.exceptions, override: override };
+  }
+
   function isDaytime(t) {
-    return Schedule.isOn(settings, t.day, t.minutes);
+    return Schedule.isOn(effective(), t);
   }
 
   // ---------- Settings sync ----------
 
-  function cachedSettings() {
+  function cached(key, normalize, fallback) {
     try {
-      var raw = localStorage.getItem(SETTINGS_CACHE_KEY);
-      if (raw) return Schedule.normalize(JSON.parse(raw));
+      var raw = localStorage.getItem(key);
+      if (raw) return normalize(JSON.parse(raw));
     } catch (e) {}
-    return Schedule.defaults();
+    return fallback;
+  }
+
+  function store(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) {}
   }
 
   function applySettings(raw) {
     settings = Schedule.normalize(raw);
-    try {
-      localStorage.setItem(SETTINGS_CACHE_KEY, JSON.stringify(settings));
-    } catch (e) {}
+    store(SETTINGS_CACHE_KEY, settings);
+    tick();
+  }
+
+  function applyOverride(raw) {
+    override = Schedule.normalizeOverride(raw);
+    store(OVERRIDE_CACHE_KEY, override);
     tick();
   }
 
@@ -200,12 +221,14 @@
         hello: function (data) {
           setServerTime(data.serverTime);
           checkReload(data.reloadAt);
+          applyOverride(data.override);
           if (data.settings) applySettings(data.settings);
           else loadStaticSettings(); // server has nothing saved yet
         },
         settings: function (data) {
           setServerTime(data.serverTime);
-          applySettings(data.settings);
+          applyOverride(data.override);
+          if (data.settings) applySettings(data.settings);
         },
         reload: function (data) {
           checkReload(data.reloadAt);
@@ -267,10 +290,57 @@
 
   // ---------- Schedule frames ----------
 
+  // Load the schedule, but only after checking its site answers at all: otherwise the browser
+  // would put its own error page on screen (after a power cut the router often comes back
+  // later than the TV). Until then the old page stays, or the splash says it is waiting.
   function loadSchedule() {
-    if (pendingFrame) return;
-    if (activeFrame && navigator.onLine === false) return; // keep what is on screen while offline
+    if (pendingFrame || probing) return;
+    lastLoadAt = Date.now();
+    probing = true;
+    reachable().then(function (ok) {
+      probing = false;
+      if (!running || isNight) return;
+      setWaiting(!ok);
+      if (ok) startLoad();
+      else if (activeFrame && config.refreshMinutes > 0) {
+        // Keep the page on screen and try again soon instead of a full refresh interval later.
+        lastLoadAt = Date.now() - config.refreshMinutes * 60 * 1000 + NET_RETRY_MS;
+      }
+    });
+  }
 
+  function reachable() {
+    if (navigator.onLine === false) return Promise.resolve(false);
+    var origin;
+    try {
+      origin = new URL(scheduleSrc(), location.href).origin;
+    } catch (e) {
+      return Promise.resolve(true);
+    }
+    // An opaque no-cors answer is enough: any HTTP response means the site is reachable.
+    var probe = fetch(origin + "/favicon.ico?t=" + Date.now(), { mode: "no-cors", cache: "no-store" }).then(
+      function () {
+        return true;
+      },
+      function () {
+        return false;
+      }
+    );
+    var timeout = new Promise(function (resolve) {
+      setTimeout(function () {
+        resolve(false);
+      }, PROBE_TIMEOUT_MS);
+    });
+    return Promise.race([probe, timeout]);
+  }
+
+  function setWaiting(on) {
+    if (waitingNet === on) return;
+    waitingNet = on;
+    if (!splashDone) note.textContent = on ? "Немає зв'язку з сайтом розкладу. Чекаємо на інтернет…" : "Завантаження розкладу…";
+  }
+
+  function startLoad() {
     var frame = frames[0] === activeFrame ? frames[1] : frames[0];
     pendingFrame = frame;
     lastLoadAt = Date.now();
@@ -346,6 +416,9 @@
       whenShown(function () {
         body.classList.remove("is-night");
       });
+    } else if (day && !activeFrame) {
+      // Nothing on screen yet (no network so far): keep trying.
+      if (!pendingFrame && Date.now() - lastLoadAt >= NET_RETRY_MS) loadSchedule();
     } else if (day && config.refreshMinutes > 0) {
       if (Date.now() - lastLoadAt >= config.refreshMinutes * 60 * 1000) loadSchedule();
     }
@@ -367,7 +440,7 @@
 
   function showNightHint() {
     var t = now();
-    var next = Schedule.nextStart(settings, t.day, t.minutes);
+    var next = Schedule.nextStart(effective(), t, config.timeZone);
     nightClock.textContent = Schedule.formatClock(t.minutes);
     nightText.textContent = next ? "Розклад увімкнеться " + next : "";
     night.classList.add("show-hint");
@@ -395,7 +468,9 @@
     button.disabled = true;
     body.classList.add("is-running");
 
-    setTimeout(finishSplash, SPLASH_MAX_WAIT_MS);
+    setTimeout(function () {
+      if (!waitingNet) finishSplash(); // while waiting for the network the splash says so
+    }, SPLASH_MAX_WAIT_MS);
     tick();
     setInterval(tick, TICK_MS);
   }

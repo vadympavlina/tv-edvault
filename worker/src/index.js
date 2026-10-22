@@ -10,7 +10,8 @@
 //   POST /login             { password } -> { token, expires }
 //   GET  /admin             settings, history, screens, reload marker                     (token)
 //   GET  /admin/ws?token=   live updates of the same for the settings page                (token)
-//   PUT  /settings          { days } -> saves, appends history, pushes to TVs             (token)
+//   PUT  /settings          { days, exceptions } -> saves, appends history, pushes to TVs (token)
+//   PUT  /override          { mode: "on"|"off", until } or { mode: null } -> "now" button  (token)
 //   POST /reload            asks every TV to reload the page                              (token)
 //   POST /screens/forget    { id } -> removes an offline TV from the list                 (token)
 //
@@ -34,6 +35,10 @@ const HTTP_ONLINE_MS = 7 * 60 * 1000;
 const SWEEP_MS = 60 * 1000;
 const SCREEN_FORGET_MS = 30 * 24 * 60 * 60 * 1000;
 const STATES = ["schedule", "night", "splash"];
+// Special dates are kept this long after they end, then dropped on the next save.
+const KEEP_PAST_EXCEPTIONS_DAYS = 60;
+// A manual override may not reach further than this.
+const OVERRIDE_MAX_MS = 14 * 24 * 60 * 60 * 1000;
 
 export default {
   async fetch(request, env) {
@@ -97,6 +102,9 @@ export class Hub {
         case "PUT /settings":
           await this.authorize(bearer(request));
           return json(await this.saveSettings(request));
+        case "PUT /override":
+          await this.authorize(bearer(request));
+          return json(await this.saveOverride(request));
         case "POST /reload":
           await this.authorize(bearer(request));
           return json(await this.requestReload());
@@ -144,11 +152,7 @@ export class Hub {
     server.serializeAttachment(screen);
     await this.ctx.storage.put("screen:" + id, screen);
 
-    const [settings, reloadAt] = await Promise.all([
-      this.ctx.storage.get("settings"),
-      this.ctx.storage.get("reloadAt"),
-    ]);
-    send(server, { type: "hello", settings: settings || null, reloadAt: reloadAt || 0, serverTime: Date.now() });
+    send(server, { type: "hello", ...(await this.tvState()) });
     await this.broadcastScreens();
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -252,11 +256,23 @@ export class Hub {
       await this.ctx.storage.put("screen:" + id, screen);
       if (stored.state !== screen.state || stored.transport !== "http") await this.broadcastScreens();
     }
-    const [settings, reloadAt] = await Promise.all([
+    return this.tvState();
+  }
+
+  // What a TV needs: saved settings (null until the first save), the manual override, the
+  // reload marker and the exact time.
+  async tvState() {
+    const [settings, override, reloadAt] = await Promise.all([
       this.ctx.storage.get("settings"),
+      this.override(),
       this.ctx.storage.get("reloadAt"),
     ]);
-    return { settings: settings || null, reloadAt: reloadAt || 0, serverTime: Date.now() };
+    return { settings: settings || null, override, reloadAt: reloadAt || 0, serverTime: Date.now() };
+  }
+
+  async override() {
+    const override = Schedule.normalizeOverride(await this.ctx.storage.get("override"));
+    return override && override.until > Date.now() ? override : null;
   }
 
   // ---------- Screens list ----------
@@ -355,14 +371,16 @@ export class Hub {
   }
 
   async adminState() {
-    const [settings, history, reloadAt, screens] = await Promise.all([
+    const [settings, override, history, reloadAt, screens] = await Promise.all([
       this.ctx.storage.get("settings"),
+      this.override(),
       this.ctx.storage.get("history"),
       this.ctx.storage.get("reloadAt"),
       this.screens(),
     ]);
     return {
       settings: settings || null,
+      override,
       history: history || [],
       reloadAt: reloadAt || 0,
       screens,
@@ -373,15 +391,36 @@ export class Hub {
   async saveSettings(request) {
     const body = await readJson(request);
     if (!body || typeof body.days !== "object") throw new HttpError(400, "bad_settings");
-    const settings = Schedule.normalize(body);
+    const today = Schedule.now(this.env.TIME_ZONE).date;
+    const settings = Schedule.pruneExceptions(Schedule.normalize(body), today, KEEP_PAST_EXCEPTIONS_DAYS);
     const history = (await this.ctx.storage.get("history")) || [];
     history.unshift({ at: Date.now(), settings });
     const trimmed = history.slice(0, HISTORY_LIMIT);
     await this.ctx.storage.put({ settings, history: trimmed });
 
-    const delivered = this.broadcastTvs({ type: "settings", settings, serverTime: Date.now() });
+    const override = await this.override();
+    const delivered = this.broadcastTvs({ type: "settings", settings, override, serverTime: Date.now() });
     for (const ws of openSockets(this.ctx, "admin")) send(ws, { type: "settings", settings, history: trimmed });
     return { settings, history: trimmed, delivered };
+  }
+
+  async saveOverride(request) {
+    const body = await readJson(request);
+    let override = null;
+    if (body.mode !== null && body.mode !== undefined) {
+      override = Schedule.normalizeOverride(body);
+      const now = Date.now();
+      if (!override || override.until <= now || override.until > now + OVERRIDE_MAX_MS) {
+        throw new HttpError(400, "bad_override");
+      }
+    }
+    if (override) await this.ctx.storage.put("override", override);
+    else await this.ctx.storage.delete("override");
+
+    const settings = (await this.ctx.storage.get("settings")) || null;
+    const delivered = this.broadcastTvs({ type: "settings", settings, override, serverTime: Date.now() });
+    for (const ws of openSockets(this.ctx, "admin")) send(ws, { type: "override", override });
+    return { override, delivered };
   }
 
   async forgetScreen(request) {

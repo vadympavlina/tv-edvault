@@ -195,6 +195,11 @@
     if (document.visibilityState === "visible") keepAwake();
   });
 
+  // Save the site in the browser so a TV can start it without network (sw.js).
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("sw.js").catch(function () {});
+  }
+
   active = createFrame(appUrl(false, null), false);
   keepAwake();
   checkVersion();

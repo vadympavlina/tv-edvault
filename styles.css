@@ -391,10 +391,19 @@ body.is-night #night {
 
 /* ---------- Launch transition ---------- */
 
+/* The button goes; the line under it stays to say what is happening (loading, waiting for
+   the network). */
 #splash.is-launching .launch {
   animation: none;
+  opacity: 1;
+  transform: none;
+}
+
+#splash.is-launching .launch-btn {
+  animation: none;
   opacity: 0;
-  transform: translateY(2vmin);
+  transform: scale(0.9);
+  pointer-events: none;
   transition: opacity 400ms ease, transform 400ms ease;
 }
 
@@ -416,7 +425,7 @@ body.is-night #night {
 
 /* Loading dots under the logo while the schedule loads behind the splash. */
 #splash.is-launching .launch-note {
-  opacity: 1;
+  font-size: clamp(14px, 2.2vmin, 32px);
 }
 
 @media (prefers-reduced-motion: reduce) {

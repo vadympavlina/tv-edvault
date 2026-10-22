@@ -33,6 +33,8 @@
   var clockOffset = 0;
   var refreshTimer = null;
   var screens = [];
+  var exceptions = []; // special dates in the form (normalized, sorted)
+  var override = null; // manual "now" override, applied right away (not part of the form)
   var live = { socket: null, attempt: 0, retry: null, ping: null, pong: null };
 
   // ---------- Session ----------
@@ -165,6 +167,8 @@
       setTime(row.on, d.on);
       setTime(row.off, d.off);
     });
+    exceptions = settings.exceptions.slice();
+    renderExceptions();
     onChange();
   }
 
@@ -189,6 +193,7 @@
         off: ok ? Schedule.formatClock(off) : saved.days[day].off,
       };
     });
+    result.exceptions = exceptions;
     return valid ? result : null;
   }
 
@@ -216,16 +221,202 @@
     else if (!saving && current && status.dataset.kind !== "ok") setStatus("");
   }
 
+  // ---------- Now: state and manual override ----------
+
+  function moment() {
+    return Schedule.now(config.timeZone, clockOffset);
+  }
+
+  function withOverride(settings) {
+    return { days: settings.days, exceptions: settings.exceptions, override: override };
+  }
+
   function renderNowState(settings) {
-    var t = Schedule.now(config.timeZone, clockOffset);
-    var on = Schedule.isOn(settings, t.day, t.minutes);
+    var t = moment();
+    var tz = config.timeZone;
+    var effective = withOverride(settings);
+    var on = Schedule.isOn(effective, t);
+    var change = Schedule.nextChange(effective, t, tz);
+    var active = override && override.until > t.ms ? override : null;
+
     nowState.classList.toggle("is-on", on);
     if (on) {
-      nowState.textContent = "Зараз показується розклад, до " + settings.days[Schedule.DAYS[t.day]].off;
+      nowState.textContent = "Показується розклад" + (change ? ", до " + whenText(change, t) : "");
     } else {
-      var next = Schedule.nextStart(settings, t.day, t.minutes);
-      nowState.textContent = next ? "Зараз чорний екран, увімкнеться " + next : "Зараз чорний екран, увімкнених днів немає";
+      nowState.textContent =
+        "Чорний екран" + (change ? ", розклад увімкнеться " + Schedule.describe(change, t, tz) : ", увімкнень попереду немає");
     }
+
+    var rule = Schedule.ruleFor(settings, t.date);
+    var todayException = $("now-exception");
+    todayException.hidden = !rule.exception;
+    if (rule.exception) {
+      todayException.textContent =
+        "Сьогодні особливий день" +
+        (rule.exception.note ? ": " + rule.exception.note : "") +
+        " (" + (rule.exception.enabled ? rule.exception.on + "–" + rule.exception.off : "вимкнено весь день") + ")";
+    }
+
+    $("override-active").hidden = !active;
+    if (active) {
+      $("override-text").textContent =
+        (active.mode === "on" ? "Увімкнено вручну" : "Вимкнено вручну") + " до " + whenText(active.until, t);
+    }
+    // Offer what makes sense from here: switching off while on, switching on while off.
+    $("override-off").hidden = !on;
+    $("override-on").hidden = on;
+  }
+
+  // "18:30" today, otherwise "завтра о 08:00" and so on.
+  function whenText(ms, t) {
+    var target = Schedule.at(ms, config.timeZone);
+    if (target.minutes === 0 && target.date === Schedule.addDays(t.date, 1)) return "опівночі";
+    var text = Schedule.describe(ms, t, config.timeZone);
+    return target.date === t.date ? text.replace(/^о /, "") : text;
+  }
+
+  function overrideUntil(mode, span) {
+    var t = moment();
+    var tz = config.timeZone;
+    if (span === "1h") return t.ms + 60 * 60 * 1000;
+    if (span === "2h") return t.ms + 2 * 60 * 60 * 1000;
+    if (span === "4h") return t.ms + 4 * 60 * 60 * 1000;
+    if (span === "day") return Schedule.toMs(t.date, 24 * 60, tz);
+    // "next": until the schedule itself switches on again after its current stretch.
+    var base = { days: saved.days, exceptions: saved.exceptions };
+    var from = t;
+    if (Schedule.isOn(base, t)) {
+      var end = Schedule.nextChange(base, t, tz);
+      if (end === null) return null;
+      from = Schedule.at(end, tz);
+    }
+    return Schedule.nextChange(base, from, tz);
+  }
+
+  function setOverride(mode, span, button) {
+    var body = { mode: null };
+    if (mode) {
+      var until = overrideUntil(mode, span);
+      if (!until) return setStatus("За розкладом увімкнень попереду немає, оберіть інший варіант.", "error");
+      body = { mode: mode, until: until };
+    }
+    if (button) button.disabled = true;
+    api("PUT", "/override", body)
+      .then(function (data) {
+        override = Schedule.normalizeOverride(data.override);
+        renderNowState(read() || saved);
+        var where = data.delivered ? " Надіслано на " + tvCount(data.delivered) + "." : "";
+        setStatus((override ? "Готово." : "Повернули звичайний розклад.") + where, "ok");
+      })
+      .catch(function (error) {
+        handleError(error, "Не вдалося застосувати.");
+      })
+      .then(function () {
+        if (button) button.disabled = false;
+      });
+  }
+
+  // ---------- Special dates ----------
+
+  function formatRange(e) {
+    if (e.from === e.to) return Schedule.formatDate(e.from) + " " + e.from.slice(0, 4);
+    var sameYear = e.from.slice(0, 4) === e.to.slice(0, 4);
+    return (
+      Schedule.formatDate(e.from) +
+      (sameYear ? "" : " " + e.from.slice(0, 4)) +
+      " – " +
+      Schedule.formatDate(e.to) +
+      " " +
+      e.to.slice(0, 4)
+    );
+  }
+
+  function renderExceptions() {
+    var list = $("exceptions");
+    var today = moment().date;
+    list.textContent = "";
+    $("exceptions-empty").hidden = exceptions.length > 0;
+    exceptions.forEach(function (e, index) {
+      var li = document.createElement("li");
+      var past = e.to < today;
+      var current = e.from <= today && today <= e.to;
+      li.className = "exception" + (past ? " is-past" : "") + (current ? " is-current" : "");
+
+      var text = document.createElement("div");
+      text.className = "exception-text";
+      var when = document.createElement("span");
+      when.className = "exception-when";
+      when.textContent = formatRange(e);
+      if (current || past) {
+        var badge = document.createElement("span");
+        badge.className = "badge" + (current ? " badge-current" : "");
+        badge.textContent = current ? "діє зараз" : "минуло";
+        when.appendChild(badge);
+      }
+      var what = document.createElement("span");
+      what.className = "exception-what";
+      what.textContent = (e.enabled ? e.on + "–" + e.off : "вимкнено весь день") + (e.note ? " · " + e.note : "");
+      text.appendChild(when);
+      text.appendChild(what);
+
+      var remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "btn btn-small btn-ghost";
+      remove.textContent = "Видалити";
+      remove.addEventListener("click", function () {
+        exceptions = exceptions.filter(function (_, i) {
+          return i !== index;
+        });
+        renderExceptions();
+        onChange();
+      });
+
+      li.appendChild(text);
+      li.appendChild(remove);
+      list.appendChild(li);
+    });
+  }
+
+  function addException(event) {
+    event.preventDefault();
+    var error = $("exception-error");
+    var from = $("exception-from").value;
+    var to = $("exception-to").value || from;
+    var mode = $("exception-mode").value;
+    var on = $("exception-on").value;
+    var off = $("exception-off").value;
+    error.textContent = "";
+    if (!Schedule.isDate(from)) return (error.textContent = "Вкажіть дату.");
+    if (!Schedule.isDate(to) || to < from) return (error.textContent = "Дата «по» має бути не раніше за «з».");
+    if (mode === "hours" && Schedule.parseClock(on) >= Schedule.parseClock(off)) {
+      return (error.textContent = "Час вимкнення має бути пізніше за час увімкнення.");
+    }
+    var entry = { from: from, to: to, enabled: mode === "hours", on: on, off: off, note: $("exception-note").value };
+    var next = Schedule.normalize({ days: saved.days, exceptions: exceptions.concat([entry]) }).exceptions;
+    exceptions = next;
+    renderExceptions();
+    onChange();
+    $("exception-form").reset();
+    setTime($("exception-on"), "10:00");
+    setTime($("exception-off"), "16:00");
+    $("exception-hours").hidden = true;
+    setStatus("Особливий день додано. Натисніть «Зберегти», щоб надіслати на телевізори.");
+  }
+
+  function buildExceptionForm() {
+    addTimeOptions($("exception-on"), 0, 24 * 60 - STEP_MINUTES);
+    addTimeOptions($("exception-off"), STEP_MINUTES, 24 * 60);
+    setTime($("exception-on"), "10:00");
+    setTime($("exception-off"), "16:00");
+    $("exception-mode").addEventListener("change", function () {
+      $("exception-hours").hidden = this.value !== "hours";
+    });
+    $("exception-from").addEventListener("change", function () {
+      var to = $("exception-to");
+      if (to.value && to.value < this.value) to.value = this.value;
+      to.min = this.value;
+    });
+    $("exception-form").addEventListener("submit", addException);
   }
 
   function setStatus(text, kind) {
@@ -236,10 +427,12 @@
   }
 
   function summary(settings) {
-    return Schedule.DAYS.map(function (day) {
+    var week = Schedule.DAYS.map(function (day) {
       var d = settings.days[day];
       return SHORT_DAYS[day] + " " + (d.enabled ? d.on + "–" + d.off : "вимк.");
     }).join(" · ");
+    var n = (settings.exceptions || []).length;
+    return n ? week + " · особливих днів: " + n : week;
   }
 
   // ---------- Screens ----------
@@ -418,6 +611,7 @@
   // first: also replace the form with what the server has (later updates keep unsaved edits).
   function applyState(data, first) {
     applyServerTime(data.serverTime);
+    override = Schedule.normalizeOverride(data.override);
     screens = data.screens || [];
     renderScreens();
     renderHistory(data.history || []);
@@ -476,6 +670,9 @@
         applyServerTime(data.serverTime);
         screens = data.screens || [];
         renderScreens();
+      } else if (data.type === "override") {
+        override = Schedule.normalizeOverride(data.override);
+        renderNowState(read() || saved);
       } else if (data.type === "settings") {
         renderHistory(data.history || []);
         if (!saving) applySettings(Schedule.normalize(data.settings), false);
@@ -648,7 +845,17 @@
   $("name-example").textContent =
     location.href.replace(/settings\.html.*$/, "") + "?name=Хол 1";
 
+  Array.prototype.forEach.call(document.querySelectorAll(".chip"), function (chip) {
+    chip.addEventListener("click", function () {
+      setOverride(chip.dataset.mode, chip.dataset.for, chip);
+    });
+  });
+  $("override-cancel").addEventListener("click", function () {
+    setOverride(null, null, this);
+  });
+
   buildWeek();
+  buildExceptionForm();
   if (!apiUrl) show("setup");
   else if (session()) start();
   else show("login");

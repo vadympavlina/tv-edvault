@@ -44,12 +44,84 @@
       <button id="logout" class="btn btn-ghost btn-small" type="button">Вийти</button>
     </header>
 
+    <section class="card" aria-labelledby="now-title">
+      <div class="card-head">
+        <h2 id="now-title">Зараз</h2>
+      </div>
+      <p id="now-state" class="now-state"></p>
+      <p id="now-exception" class="now-exception" hidden></p>
+      <div id="override-active" class="override-active" hidden>
+        <span id="override-text"></span>
+        <button id="override-cancel" class="btn btn-small" type="button">Повернути до розкладу</button>
+      </div>
+      <div id="override-off" class="chips" role="group" aria-labelledby="override-off-label">
+        <span id="override-off-label" class="chips-label">Вимкнути зараз</span>
+        <button class="chip" type="button" data-mode="off" data-for="1h">на 1 годину</button>
+        <button class="chip" type="button" data-mode="off" data-for="day">до кінця дня</button>
+        <button class="chip" type="button" data-mode="off" data-for="next">до наступного увімкнення</button>
+      </div>
+      <div id="override-on" class="chips" role="group" aria-labelledby="override-on-label">
+        <span id="override-on-label" class="chips-label">Увімкнути зараз</span>
+        <button class="chip" type="button" data-mode="on" data-for="1h">на 1 годину</button>
+        <button class="chip" type="button" data-mode="on" data-for="2h">на 2 години</button>
+        <button class="chip" type="button" data-mode="on" data-for="4h">на 4 години</button>
+        <button class="chip" type="button" data-mode="on" data-for="day">до кінця дня</button>
+      </div>
+      <p class="hint">Діє одразу на всіх телевізорах і не змінює розклад нижче.</p>
+    </section>
+
     <section class="card" aria-labelledby="week-title">
       <div class="card-head">
         <h2 id="week-title">Тиждень</h2>
-        <span id="now-state" class="now-state"></span>
       </div>
       <ol id="week" class="week"></ol>
+    </section>
+
+    <section class="card" aria-labelledby="exceptions-title">
+      <div class="card-head">
+        <div class="card-title">
+          <h2 id="exceptions-title">Особливі дні</h2>
+          <span class="count">свята, канікули, інший час</span>
+        </div>
+      </div>
+      <ul id="exceptions" class="exceptions"></ul>
+      <p id="exceptions-empty" class="muted">Особливих днів немає, щодня діє звичайний тиждень.</p>
+
+      <form id="exception-form" class="exception-form" novalidate>
+        <div class="form-row">
+          <label class="field">
+            <span>З</span>
+            <input id="exception-from" type="date" required>
+          </label>
+          <label class="field">
+            <span>По <small>(для одного дня можна не вказувати)</small></span>
+            <input id="exception-to" type="date">
+          </label>
+        </div>
+        <div class="form-row">
+          <label class="field">
+            <span>Що показувати</span>
+            <select id="exception-mode">
+              <option value="off">Вимкнено весь день</option>
+              <option value="hours">Інший час</option>
+            </select>
+          </label>
+          <div id="exception-hours" class="field" hidden>
+            <span>Час</span>
+            <div class="day-times">
+              <label class="time"><span class="sr-only">Вмикати о</span><select id="exception-on"></select></label>
+              <span class="dash" aria-hidden="true">–</span>
+              <label class="time"><span class="sr-only">Вимикати о</span><select id="exception-off"></select></label>
+            </div>
+          </div>
+        </div>
+        <label class="field">
+          <span>Примітка</span>
+          <input id="exception-note" type="text" maxlength="80" placeholder="Наприклад: Різдво, зимові канікули, олімпіада">
+        </label>
+        <p id="exception-error" class="form-error" role="alert"></p>
+        <button class="btn" type="submit">Додати особливий день</button>
+      </form>
     </section>
 
     <section class="card" aria-labelledby="screens-title">

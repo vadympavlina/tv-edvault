@@ -15,9 +15,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: node tests/schedule.test.js
+
   # Settings server (worker/). Deployed only when the Cloudflare secrets and the admin password
   # are set; without them TVs keep reading settings.json.
   worker:
+    needs: test
     runs-on: ubuntu-latest
     outputs:
       url: ${{ steps.url.outputs.url }}
@@ -64,9 +74,9 @@ jobs:
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
   deploy:
-    needs: worker
-    # Publish the site even if the worker deploy failed.
-    if: ${{ !cancelled() }}
+    needs: [test, worker]
+    # Publish the site even if the worker deploy failed, never with failing tests.
+    if: ${{ !cancelled() && needs.test.result == 'success' }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -85,6 +95,12 @@ jobs:
           printf '{"version":"%s"}\n' "$VERSION" > _site/version.json
           # Versioned asset URLs, so a TV never mixes a new page with old scripts from its cache.
           sed -i -E "s/(src|href)=\"([a-z-]+\.(js|css))\"/\1=\"\2?v=$VERSION\"/g" _site/*.html
+          # Service worker: its own version (so browsers pick up the new one) and the files a TV
+          # needs to start offline, exactly as the pages reference them.
+          PRECACHE=$( { printf '%s\n' ./ index.html app.html settings.json; grep -ohE '(src|href)="[^"#]+"' _site/index.html _site/app.html | sed -E 's/^(src|href)="(.*)"$/\2/'; } \
+            | grep -vE '^(https?:)?//' | sort -u | jq -R . | jq -sc . )
+          sed -i -e "s|^var VERSION = \"dev\";|var VERSION = \"$VERSION\";|" -e "s|^var PRECACHE = \[\];|var PRECACHE = $PRECACHE;|" _site/sw.js
+          grep -q "var VERSION = \"$VERSION\"" _site/sw.js
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

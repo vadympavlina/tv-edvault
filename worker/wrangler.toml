@@ -6,6 +6,8 @@ compatibility_date = "2025-09-01"
 workers_dev = true
 
 [vars]
+# Wall clock for the schedule (same as timeZone in config.js).
+TIME_ZONE = "Europe/Kyiv"
 # Origins allowed to call the admin routes with credentials.
 ALLOWED_ORIGINS = "https://vadympavlina.github.io,http://localhost:8765,http://localhost:8000"
 
