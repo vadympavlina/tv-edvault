@@ -233,6 +233,8 @@
         reload: function (data) {
           checkReload(data.reloadAt);
         },
+        // This one TV was asked to restart from the settings page.
+        restart: restart,
         time: function (data) {
           setServerTime(data.serverTime);
         },

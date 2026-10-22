@@ -34,125 +34,167 @@
   </main>
 
   <!-- Settings -->
-  <main id="app-view" class="page" hidden>
-    <header class="head">
-      <img class="head-logo" src="assets/logo.svg" alt="" width="40" height="48">
-      <div class="head-text">
-        <h1>Час роботи телевізорів</h1>
-        <p class="lead">Поза цим часом на екранах глибокий чорний. Телевізори отримують зміни одразу.</p>
+  <div id="app-view" hidden>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <img class="topbar-logo" src="assets/logo.svg" alt="" width="30" height="36">
+        <h1>Телевізори з розкладом</h1>
+        <span class="spacer"></span>
+        <span id="online-pill" class="pill" title="Скільки телевізорів зараз на зв'язку">
+          <span class="dot"></span><span id="online-count">—</span>
+          <span id="live" class="live" hidden>наживо</span>
+        </span>
+        <button id="logout" class="btn btn-ghost btn-small" type="button">Вийти</button>
       </div>
-      <button id="logout" class="btn btn-ghost btn-small" type="button">Вийти</button>
     </header>
 
-    <section class="card" aria-labelledby="now-title">
-      <div class="card-head">
-        <h2 id="now-title">Зараз</h2>
-      </div>
-      <p id="now-state" class="now-state"></p>
-      <p id="now-exception" class="now-exception" hidden></p>
-      <div id="override-active" class="override-active" hidden>
-        <span id="override-text"></span>
-        <button id="override-cancel" class="btn btn-small" type="button">Повернути до розкладу</button>
-      </div>
-      <div id="override-off" class="chips" role="group" aria-labelledby="override-off-label">
-        <span id="override-off-label" class="chips-label">Вимкнути зараз</span>
-        <button class="chip" type="button" data-mode="off" data-for="1h">на 1 годину</button>
-        <button class="chip" type="button" data-mode="off" data-for="day">до кінця дня</button>
-        <button class="chip" type="button" data-mode="off" data-for="next">до наступного увімкнення</button>
-      </div>
-      <div id="override-on" class="chips" role="group" aria-labelledby="override-on-label">
-        <span id="override-on-label" class="chips-label">Увімкнути зараз</span>
-        <button class="chip" type="button" data-mode="on" data-for="1h">на 1 годину</button>
-        <button class="chip" type="button" data-mode="on" data-for="2h">на 2 години</button>
-        <button class="chip" type="button" data-mode="on" data-for="4h">на 4 години</button>
-        <button class="chip" type="button" data-mode="on" data-for="day">до кінця дня</button>
-      </div>
-      <p class="hint">Діє одразу на всіх телевізорах і не змінює розклад нижче.</p>
-    </section>
+    <main class="page">
+      <!-- What is on the screens now, manual on/off, the TVs at a glance -->
+      <div class="hero">
+        <section id="now-card" class="card now-card" aria-labelledby="now-label">
+          <p id="now-label" class="label">Зараз на екранах</p>
+          <p id="now-title" class="now-title"></p>
+          <p id="now-sub" class="now-sub"></p>
+          <p id="now-exception" class="now-exception" hidden></p>
 
-    <section class="card" aria-labelledby="week-title">
-      <div class="card-head">
-        <h2 id="week-title">Тиждень</h2>
-      </div>
-      <ol id="week" class="week"></ol>
-    </section>
+          <div id="override-active" class="override-active" hidden>
+            <span id="override-text"></span>
+            <button id="override-cancel" class="btn btn-small" type="button">Повернути до розкладу</button>
+          </div>
 
-    <section class="card" aria-labelledby="exceptions-title">
-      <div class="card-head">
-        <div class="card-title">
-          <h2 id="exceptions-title">Особливі дні</h2>
-          <span class="count">свята, канікули, інший час</span>
+          <div id="override-off" class="chips" role="group" aria-label="Вимкнути зараз">
+            <button class="chip" type="button" data-mode="off" data-for="1h">Вимкнути на 1 год</button>
+            <button class="chip" type="button" data-mode="off" data-for="day">До кінця дня</button>
+            <button class="chip" type="button" data-mode="off" data-for="next">До наступного увімкнення</button>
+          </div>
+          <div id="override-on" class="chips" role="group" aria-label="Увімкнути зараз">
+            <button class="chip" type="button" data-mode="on" data-for="1h">Увімкнути на 1 год</button>
+            <button class="chip" type="button" data-mode="on" data-for="2h">На 2 год</button>
+            <button class="chip" type="button" data-mode="on" data-for="4h">На 4 год</button>
+            <button class="chip" type="button" data-mode="on" data-for="day">До кінця дня</button>
+          </div>
+          <p class="hint">Діє одразу на всіх телевізорах і не змінює розклад.</p>
+        </section>
+
+        <section class="glance" aria-label="Телевізори коротко">
+          <ul id="glance-list" class="glance-list"></ul>
+          <p id="glance-empty" class="glance-empty" hidden>Поки жоден телевізор не на зв'язку.</p>
+          <button id="glance-all" class="link-btn" type="button">Усі телевізори →</button>
+        </section>
+      </div>
+
+      <!-- Tabs -->
+      <section class="card tabs-card">
+        <nav class="tabs" role="tablist" aria-label="Розділи">
+          <button class="tab" role="tab" id="tab-week" aria-controls="panel-week" data-tab="week" type="button">Тиждень</button>
+          <button class="tab" role="tab" id="tab-dates" aria-controls="panel-dates" data-tab="dates" type="button">Особливі дні <span id="dates-count" class="tab-count" hidden></span></button>
+          <button class="tab" role="tab" id="tab-screens" aria-controls="panel-screens" data-tab="screens" type="button">Телевізори <span id="screens-count" class="tab-count" hidden></span></button>
+          <button class="tab" role="tab" id="tab-history" aria-controls="panel-history" data-tab="history" type="button">Історія</button>
+        </nav>
+
+        <!-- Week -->
+        <div class="panel" role="tabpanel" id="panel-week" aria-labelledby="tab-week">
+          <p class="panel-intro">Коли телевізори показують розклад у звичайний тиждень. Перетягуйте смужку або виберіть час праворуч.</p>
+          <div class="hours" aria-hidden="true">
+            <span></span>
+            <div class="hours-scale"><span style="left:0.000%">0</span><span style="left:12.500%">3</span><span style="left:25.000%">6</span><span style="left:37.500%">9</span><span style="left:50.000%">12</span><span style="left:62.500%">15</span><span style="left:75.000%">18</span><span style="left:87.500%">21</span><span style="left:100.000%">24</span></div>
+            <span></span>
+          </div>
+          <ol id="week" class="week"></ol>
+          <div class="presets">
+            <span class="presets-label">Швидко:</span>
+            <button id="preset-weekdays" class="btn btn-small" type="button">Будні як понеділок</button>
+            <button id="preset-weekend-off" class="btn btn-small" type="button">Вихідні вимкнено</button>
+          </div>
         </div>
-      </div>
-      <ul id="exceptions" class="exceptions"></ul>
-      <p id="exceptions-empty" class="muted">Особливих днів немає, щодня діє звичайний тиждень.</p>
 
-      <form id="exception-form" class="exception-form" novalidate>
-        <div class="form-row">
-          <label class="field">
-            <span>З</span>
-            <input id="exception-from" type="date" required>
-          </label>
-          <label class="field">
-            <span>По <small>(для одного дня можна не вказувати)</small></span>
-            <input id="exception-to" type="date">
-          </label>
-        </div>
-        <div class="form-row">
-          <label class="field">
-            <span>Що показувати</span>
-            <select id="exception-mode">
-              <option value="off">Вимкнено весь день</option>
-              <option value="hours">Інший час</option>
-            </select>
-          </label>
-          <div id="exception-hours" class="field" hidden>
-            <span>Час</span>
-            <div class="day-times">
-              <label class="time"><span class="sr-only">Вмикати о</span><select id="exception-on"></select></label>
-              <span class="dash" aria-hidden="true">–</span>
-              <label class="time"><span class="sr-only">Вимикати о</span><select id="exception-off"></select></label>
+        <!-- Special dates -->
+        <div class="panel" role="tabpanel" id="panel-dates" aria-labelledby="tab-dates" hidden>
+          <p class="panel-intro">Свята, канікули й дні з іншим часом. Вони важливіші за звичайний тиждень. Натисніть день у календарі, щоб додати або змінити.</p>
+          <div class="dates-grid">
+            <div class="calendar">
+              <div class="calendar-head">
+                <button id="cal-prev" class="icon-btn" type="button" aria-label="Попередній місяць">‹</button>
+                <h3 id="cal-title"></h3>
+                <button id="cal-next" class="icon-btn" type="button" aria-label="Наступний місяць">›</button>
+              </div>
+              <div class="calendar-grid" id="cal-grid"></div>
+              <div class="legend">
+                <span><i class="sw sw-normal"></i>звичайний день</span>
+                <span><i class="sw sw-exc"></i>особливий</span>
+                <span><i class="sw sw-off"></i>вимкнено</span>
+              </div>
+            </div>
+
+            <div class="dates-side">
+              <ul id="exceptions" class="exceptions"></ul>
+              <p id="exceptions-empty" class="muted" hidden>Особливих днів немає, щодня діє звичайний тиждень.</p>
+              <button id="exception-new" class="btn" type="button">+ Додати особливий день</button>
+
+              <form id="exception-form" class="exception-form" novalidate hidden>
+                <h3 id="exception-form-title">Новий особливий день</h3>
+                <div class="form-row">
+                  <label class="field">
+                    <span>З</span>
+                    <input id="exception-from" type="date" required>
+                  </label>
+                  <label class="field">
+                    <span>По <small>(для одного дня не потрібно)</small></span>
+                    <input id="exception-to" type="date">
+                  </label>
+                </div>
+                <div class="segmented" role="radiogroup" aria-label="Що показувати">
+                  <label><input type="radio" name="exception-mode" value="off" checked><span>Вимкнено весь день</span></label>
+                  <label><input type="radio" name="exception-mode" value="hours"><span>Інший час</span></label>
+                </div>
+                <div id="exception-hours" class="day-times" hidden>
+                  <label class="time"><span class="sr-only">Вмикати о</span><select id="exception-on"></select></label>
+                  <span class="dash" aria-hidden="true">–</span>
+                  <label class="time"><span class="sr-only">Вимикати о</span><select id="exception-off"></select></label>
+                </div>
+                <label class="field">
+                  <span>Примітка</span>
+                  <input id="exception-note" type="text" maxlength="80" placeholder="Наприклад: Різдво, зимові канікули, олімпіада">
+                </label>
+                <p id="exception-error" class="form-error" role="alert"></p>
+                <div class="form-actions">
+                  <button id="exception-submit" class="btn btn-primary" type="submit">Додати</button>
+                  <button id="exception-cancel" class="btn btn-ghost" type="button">Скасувати</button>
+                </div>
+              </form>
             </div>
           </div>
         </div>
-        <label class="field">
-          <span>Примітка</span>
-          <input id="exception-note" type="text" maxlength="80" placeholder="Наприклад: Різдво, зимові канікули, олімпіада">
-        </label>
-        <p id="exception-error" class="form-error" role="alert"></p>
-        <button class="btn" type="submit">Додати особливий день</button>
-      </form>
-    </section>
 
-    <section class="card" aria-labelledby="screens-title">
-      <div class="card-head">
-        <div class="card-title">
-          <h2 id="screens-title">Телевізори</h2>
-          <span id="screens-count" class="count"></span>
-          <span id="live" class="live" hidden title="Статус оновлюється наживо">наживо</span>
+        <!-- Screens -->
+        <div class="panel" role="tabpanel" id="panel-screens" aria-labelledby="tab-screens" hidden>
+          <ul id="screens" class="screens"></ul>
+          <p id="screens-empty" class="muted" hidden>Поки жоден телевізор не на зв'язку. Щойно на ТВ відкриють розклад, він з'явиться тут.</p>
+          <div class="screens-foot">
+            <button id="reload-all" class="btn btn-small" type="button">Перезавантажити всі</button>
+            <p class="hint">Назву можна змінити тут або відкрити на ТВ адресу з <code>?name=</code>, наприклад <code id="name-example"></code></p>
+          </div>
         </div>
-        <button id="reload-all" class="btn btn-small" type="button">Перезавантажити всі</button>
-      </div>
-      <ul id="screens" class="screens"></ul>
-      <p id="screens-empty" class="muted" hidden>Поки жоден телевізор не на зв'язку. Щойно на ТВ відкриють розклад, він з'явиться тут.</p>
-      <p class="hint">Щоб ТВ мав зрозумілу назву, відкрийте на ньому адресу з <code>?name=</code>, наприклад <code id="name-example"></code></p>
-    </section>
 
-    <section class="card" aria-labelledby="history-title">
-      <div class="card-head">
-        <h2 id="history-title">Історія змін</h2>
-      </div>
-      <ol id="history" class="history"></ol>
-      <p id="history-empty" class="muted" hidden>Змін ще не було.</p>
-    </section>
-  </main>
+        <!-- History -->
+        <div class="panel" role="tabpanel" id="panel-history" aria-labelledby="tab-history" hidden>
+          <ol id="history" class="history"></ol>
+          <p id="history-empty" class="muted" hidden>Змін ще не було.</p>
+        </div>
+      </section>
+    </main>
 
-  <footer id="savebar" class="savebar" hidden>
-    <div class="savebar-inner">
-      <p id="status" class="status" role="status" aria-live="polite"></p>
-      <button id="save" class="btn btn-primary" type="button" disabled>Зберегти</button>
-    </div>
-  </footer>
+    <!-- Shown only while there are unsaved changes -->
+    <footer id="savebar" class="savebar" hidden>
+      <div class="savebar-inner">
+        <p id="savebar-text" class="savebar-text">Є незбережені зміни</p>
+        <button id="discard" class="btn btn-ghost" type="button">Скасувати</button>
+        <button id="save" class="btn btn-primary" type="button">Зберегти</button>
+      </div>
+    </footer>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  </div>
 
   <template id="day-row">
     <li class="day">
@@ -160,18 +202,26 @@
         <input class="day-enabled" type="checkbox">
         <span class="switch-track" aria-hidden="true"></span>
         <span class="day-name"></span>
-        <span class="today-badge" hidden>сьогодні</span>
       </label>
+      <div class="track" aria-hidden="true">
+        <div class="bar">
+          <span class="handle handle-start"></span>
+          <span class="bar-label"></span>
+          <span class="handle handle-end"></span>
+        </div>
+        <div class="now-line" hidden></div>
+      </div>
       <div class="day-times">
         <label class="time"><span class="sr-only">Вмикати о</span><select class="day-on"></select></label>
         <span class="dash" aria-hidden="true">–</span>
         <label class="time"><span class="sr-only">Вимикати о</span><select class="day-off"></select></label>
-        <span class="day-offline">Вимкнено весь день</span>
+        <span class="day-offline">вимкнено</span>
       </div>
-      <button class="copy" type="button" title="Скопіювати цей час на всі дні">
+      <button class="copy icon-btn" type="button" title="Скопіювати цей час на всі дні">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
         <span class="sr-only">Скопіювати на всі дні</span>
       </button>
+      <p class="day-note" hidden></p>
       <p class="day-error" hidden>Час вимкнення має бути пізніше за час увімкнення</p>
     </li>
   </template>

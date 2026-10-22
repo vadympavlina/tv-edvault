@@ -14,6 +14,8 @@
 //   PUT  /override          { mode: "on"|"off", until } or { mode: null } -> "now" button  (token)
 //   POST /reload            asks every TV to reload the page                              (token)
 //   POST /screens/forget    { id } -> removes an offline TV from the list                 (token)
+//   POST /screens/rename    { id, label } -> name shown on the settings page              (token)
+//   POST /screens/reload    { id } -> restarts the app on that one TV                     (token)
 //
 // ADMIN_PASSWORD is a Worker secret. Sessions are HMAC-signed with a key derived from it,
 // so changing the password signs everybody out.
@@ -108,6 +110,12 @@ export class Hub {
         case "POST /reload":
           await this.authorize(bearer(request));
           return json(await this.requestReload());
+        case "POST /screens/rename":
+          await this.authorize(bearer(request));
+          return json(await this.renameScreen(request));
+        case "POST /screens/reload":
+          await this.authorize(bearer(request));
+          return json(await this.reloadScreen(request));
         case "POST /screens/forget":
           await this.authorize(bearer(request));
           return json(await this.forgetScreen(request));
@@ -141,6 +149,7 @@ export class Hub {
     const screen = {
       id,
       name: cleanText(url.searchParams.get("name"), 60) || (stored && stored.name) || "",
+      label: (stored && stored.label) || "", // set on the settings page, wins over `name`
       state: STATES.includes(url.searchParams.get("state")) ? url.searchParams.get("state") : "unknown",
       size: cleanText(url.searchParams.get("size"), 20),
       startedAt: Number(url.searchParams.get("startedAt")) || 0,
@@ -245,6 +254,7 @@ export class Hub {
       const screen = {
         id,
         name: cleanText(body.name, 60) || stored.name || "",
+        label: stored.label || "",
         state: STATES.includes(body.state) ? body.state : "unknown",
         stale: body.stale === true,
         size: cleanText(body.size, 20),
@@ -421,6 +431,31 @@ export class Hub {
     const delivered = this.broadcastTvs({ type: "settings", settings, override, serverTime: Date.now() });
     for (const ws of openSockets(this.ctx, "admin")) send(ws, { type: "override", override });
     return { override, delivered };
+  }
+
+  async renameScreen(request) {
+    const body = await readJson(request);
+    const id = cleanText(body.id, 40);
+    const stored = id && (await this.ctx.storage.get("screen:" + id));
+    if (!stored) throw new HttpError(404, "screen_not_found");
+    const label = cleanText(body.label, 60);
+    stored.label = label;
+    await this.ctx.storage.put("screen:" + id, stored);
+    for (const ws of openSockets(this.ctx, "tv:" + id)) {
+      const screen = ws.deserializeAttachment();
+      if (screen) ws.serializeAttachment({ ...screen, label });
+    }
+    await this.broadcastScreens();
+    return { screens: await this.screens() };
+  }
+
+  async reloadScreen(request) {
+    const body = await readJson(request);
+    const id = cleanText(body.id, 40);
+    if (!id) throw new HttpError(400, "id_required");
+    const sockets = openSockets(this.ctx, "tv:" + id);
+    for (const ws of sockets) send(ws, { type: "restart" });
+    return { delivered: sockets.length };
   }
 
   async forgetScreen(request) {
