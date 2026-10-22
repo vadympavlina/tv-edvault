@@ -552,6 +552,12 @@
   keepAwake();
   connect();
 
+  // Offline start (sw.js). The shell registers it too, but a TV keeps its shell for good while
+  // the app inside gets updated, so the app makes sure.
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("sw.js").catch(function () {});
+  }
+
   if (config.resume) {
     // A fresh copy swapped in by the shell: the old one was already running.
     splash.setAttribute("hidden", "");
