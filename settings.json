@@ -3,32 +3,32 @@
     "mon": {
       "enabled": true,
       "on": "14:00",
-      "off": "19:00"
+      "off": "18:30"
     },
     "tue": {
       "enabled": true,
       "on": "14:00",
-      "off": "19:00"
+      "off": "18:30"
     },
     "wed": {
       "enabled": true,
       "on": "14:00",
-      "off": "19:00"
+      "off": "18:30"
     },
     "thu": {
       "enabled": true,
       "on": "14:00",
-      "off": "19:00"
+      "off": "18:30"
     },
     "fri": {
       "enabled": true,
       "on": "14:00",
-      "off": "19:00"
+      "off": "18:30"
     },
     "sat": {
       "enabled": true,
       "on": "08:00",
-      "off": "18:00"
+      "off": "18:30"
     },
     "sun": {
       "enabled": true,
