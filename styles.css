@@ -94,8 +94,7 @@ body.is-night #night {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.6vmin;
-  color: rgba(255, 255, 255, 0.35);
+  color: rgba(255, 255, 255, 0.3);
   opacity: 0;
   transition: opacity 600ms ease;
   text-align: center;
@@ -106,16 +105,28 @@ body.is-night #night {
   opacity: 1;
 }
 
+/* The brand-blue logo turned into a faint white silhouette. */
+.night-logo {
+  height: 16vmin;
+  width: auto;
+  margin-bottom: 5vmin;
+  filter: brightness(0) invert(1);
+  opacity: 0.12;
+}
+
 #night-clock {
-  font-size: 7vmin;
-  font-weight: 300;
+  font-size: 9vmin;
+  font-weight: 200;
+  line-height: 1;
   letter-spacing: 0.04em;
   font-variant-numeric: tabular-nums;
 }
 
 #night-text {
+  margin-top: 2vmin;
   font-size: 2.2vmin;
   letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.22);
 }
 
 /* ---------- Splash ---------- */
