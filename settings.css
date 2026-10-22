@@ -10,6 +10,7 @@
   --accent: #2f7fe0;
   --ok: #3ecf8e;
   --error: #ff6b6b;
+  --warn: #ffb84d;
   --radius: 14px;
 }
 
@@ -475,6 +476,52 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.screen.is-online.is-warning .screen-dot {
+  background: var(--warn);
+  box-shadow: 0 0 0 4px rgba(255, 184, 77, 0.18);
+}
+
+.screen.is-online.is-warning .screen-state {
+  color: var(--warn);
+}
+
+.card-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.count {
+  color: var(--ink-faint);
+  font-size: 14px;
+}
+
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ok);
+  font-size: 13px;
+}
+
+.live::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  50% { opacity: 0.3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live::before { animation: none; }
+}
+
 .screen-state {
   flex: none;
   color: var(--ink-faint);
@@ -548,6 +595,7 @@ h2 {
 }
 
 .btn-small {
+  white-space: nowrap;
   min-height: 36px;
   padding: 6px 14px;
   font-size: 14px;
@@ -628,5 +676,10 @@ h2 {
 
   .time select {
     width: 92px;
+  }
+
+  /* The dot already says online/offline; keep the row for the name and details. */
+  .screen-state {
+    display: none;
   }
 }

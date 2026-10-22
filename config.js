@@ -6,11 +6,10 @@ window.TV_CONFIG = {
   scheduleUrl: "https://lb.itstep.org/schedule",
   rooms: "186,189,192,134,92,89,67,1,4,3,68,9,8,66,10,7,6,75,73,70,5,69,72,78,81,180,175",
 
-  // On/off hours, reload requests and the exact time come from the settings server
-  // (worker/, its address is written to api-url.js on deploy). TVs ask it every `syncSeconds`.
+  // On/off hours, reload requests and the exact time are pushed by the settings server over a
+  // WebSocket (worker/, link.js; its address is written to api-url.js on deploy).
   // settings.json is the fallback for when the server is missing or has nothing saved yet.
   settingsUrl: "settings.json",
-  syncSeconds: 60,
 
   // Clock used for on/off. Kept explicit because TVs often ship with a wrong time zone.
   timeZone: "Europe/Kyiv",

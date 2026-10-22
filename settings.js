@@ -2,9 +2,9 @@
   "use strict";
 
   var SESSION_KEY = "tv-schedule:session";
-  var REFRESH_MS = 30 * 1000;
-  // A TV checks in every minute; after this long without news it is shown as offline.
-  var OFFLINE_AFTER_MS = 3 * 60 * 1000;
+  var CLOCK_MS = 30 * 1000;
+  var FALLBACK_REFRESH_MS = 60 * 1000;
+  var HIDDEN_DISCONNECT_MS = 2 * 60 * 1000;
   var STEP_MINUTES = 15;
   var SHORT_DAYS = { mon: "Пн", tue: "Вт", wed: "Ср", thu: "Чт", fri: "Пт", sat: "Сб", sun: "Нд" };
 
@@ -32,6 +32,8 @@
   var saving = false;
   var clockOffset = 0;
   var refreshTimer = null;
+  var screens = [];
+  var live = { socket: null, attempt: 0, retry: null, ping: null, pong: null };
 
   // ---------- Session ----------
 
@@ -60,6 +62,7 @@
 
   function signOut(message) {
     clearInterval(refreshTimer);
+    stopLive();
     setSession(null);
     show("login");
     $("login-error").textContent = message || "";
@@ -250,13 +253,18 @@
     return Math.round(h / 24) + " дн тому";
   }
 
-  function renderScreens(screens, serverTime) {
+  function screenTitle(screen) {
+    return screen.name || "ТВ " + screen.id.slice(0, 4).toUpperCase();
+  }
+
+  function renderScreens() {
+    var now = Date.now() + clockOffset;
     screensList.textContent = "";
     $("screens-empty").hidden = screens.length > 0;
     screens.forEach(function (screen) {
-      var online = serverTime - screen.lastSeen < OFFLINE_AFTER_MS;
+      var online = !!screen.online;
       var li = document.createElement("li");
-      li.className = "screen" + (online ? " is-online" : "");
+      li.className = "screen" + (online ? " is-online" : "") + (online && screen.stale ? " is-warning" : "");
 
       var dot = document.createElement("span");
       dot.className = "screen-dot";
@@ -266,15 +274,19 @@
       main.className = "screen-main";
       var name = document.createElement("span");
       name.className = "screen-name";
-      name.textContent = screen.name || "ТВ " + screen.id.slice(0, 4).toUpperCase();
+      name.textContent = screenTitle(screen);
       var meta = document.createElement("span");
       meta.className = "screen-meta";
       var parts = [];
-      if (!online) parts.push("не на зв'язку, востаннє " + ago(serverTime - screen.lastSeen));
-      else if (screen.state === "schedule")
-        parts.push("показує розклад" + (screen.scheduleLoadedAt ? ", оновлено " + ago(Date.now() - screen.scheduleLoadedAt) : ""));
-      else if (screen.state === "night") parts.push("чорний екран");
-      else if (screen.state === "splash") parts.push("заставка, розклад не запущено");
+      if (!online) {
+        parts.push("не на зв'язку, востаннє " + ago(now - screen.lastSeen));
+      } else {
+        if (screen.state === "schedule") parts.push(screen.stale ? "розклад давно не оновлювався" : "показує розклад");
+        else if (screen.state === "night") parts.push("чорний екран");
+        else if (screen.state === "splash") parts.push("заставка, розклад не запущено");
+        if (screen.transport === "http") parts.push("без постійного з'єднання");
+        else if (screen.connectedAt) parts.push("на зв'язку " + duration(now - screen.connectedAt));
+      }
       if (screen.size) parts.push(screen.size);
       meta.textContent = parts.join(" · ");
       main.appendChild(name);
@@ -282,13 +294,51 @@
 
       var state = document.createElement("span");
       state.className = "screen-state";
-      state.textContent = online ? "онлайн" : "офлайн";
+      state.textContent = !online ? "офлайн" : screen.stale ? "увага" : "онлайн";
 
       li.appendChild(dot);
       li.appendChild(main);
       li.appendChild(state);
+      if (!online) {
+        var forget = document.createElement("button");
+        forget.type = "button";
+        forget.className = "btn btn-small btn-ghost";
+        forget.textContent = "Прибрати";
+        forget.title = "Прибрати зі списку. Якщо цей ТВ знову вийде на зв'язок, він з'явиться сам.";
+        forget.addEventListener("click", function () {
+          forgetScreen(screen, forget);
+        });
+        li.appendChild(forget);
+      }
       screensList.appendChild(li);
     });
+    var count = screens.filter(function (s) {
+      return s.online;
+    }).length;
+    $("screens-count").textContent = screens.length ? count + " з " + screens.length + " онлайн" : "";
+  }
+
+  function forgetScreen(screen, button) {
+    if (!window.confirm("Прибрати «" + screenTitle(screen) + "» зі списку?")) return;
+    button.disabled = true;
+    api("POST", "/screens/forget", { id: screen.id })
+      .then(function (data) {
+        screens = data.screens || [];
+        renderScreens();
+      })
+      .catch(function (error) {
+        button.disabled = false;
+        handleError(error, error.code === "screen_online" ? "Цей телевізор знову на зв'язку." : "Не вдалося прибрати телевізор.");
+      });
+  }
+
+  function duration(ms) {
+    var min = Math.floor(ms / 60000);
+    if (min < 1) return "менше хвилини";
+    if (min < 60) return min + " хв";
+    var h = Math.floor(min / 60);
+    if (h < 24) return h + " год " + (min % 60) + " хв";
+    return Math.floor(h / 24) + " дн " + (h % 24) + " год";
   }
 
   // ---------- History ----------
@@ -352,27 +402,113 @@
       .catch(Schedule.defaults);
   }
 
-  // first: also replace the form with what the server has (later refreshes keep unsaved edits).
+  function applyServerTime(serverTime) {
+    if (serverTime) clockOffset = serverTime - Date.now();
+  }
+
+  // Server settings arrived. The form follows them unless the user is in the middle of an edit.
+  function applySettings(settings, force) {
+    var current = read();
+    var untouched = current && !isDirty(current);
+    saved = settings;
+    if (force || untouched) fill(settings);
+    else onChange();
+  }
+
+  // first: also replace the form with what the server has (later updates keep unsaved edits).
+  function applyState(data, first) {
+    applyServerTime(data.serverTime);
+    screens = data.screens || [];
+    renderScreens();
+    renderHistory(data.history || []);
+    // Nothing saved on the server yet: start from the hours the TVs use today.
+    return (data.settings ? Promise.resolve(Schedule.normalize(data.settings)) : loadStaticSettings()).then(
+      function (settings) {
+        applySettings(settings, first);
+      }
+    );
+  }
+
   function refresh(first) {
     return api("GET", "/admin")
       .then(function (data) {
-        clockOffset = data.serverTime ? data.serverTime - Date.now() : 0;
-        renderScreens(data.screens || [], data.serverTime || Date.now());
-        renderHistory(data.history || []);
-        // Nothing saved on the server yet: start from the hours the TVs use today.
-        return (data.settings ? Promise.resolve(Schedule.normalize(data.settings)) : loadStaticSettings()).then(
-          function (settings) {
-            var current = read();
-            var untouched = current && !isDirty(current);
-            saved = settings;
-            if (first || untouched) fill(settings);
-            else onChange();
-          }
-        );
+        return applyState(data, first);
       })
       .catch(function (error) {
         handleError(error, "Не вдалося отримати дані з сервера.");
       });
+  }
+
+  // ---------- Live updates ----------
+
+  // A WebSocket brings TV status changes the moment they happen. If it cannot be kept open,
+  // the page falls back to asking the server every minute.
+  function connectLive() {
+    clearTimeout(live.retry);
+    var s = session();
+    if (!s || !("WebSocket" in window)) return;
+    var socket = new WebSocket(apiUrl.replace(/^http/, "ws") + "/admin/ws?token=" + encodeURIComponent(s.token));
+    live.socket = socket;
+
+    socket.onopen = function () {
+      live.attempt = 0;
+      setLive(true);
+      live.ping = setInterval(function () {
+        if (socket.readyState !== WebSocket.OPEN) return;
+        socket.send("ping");
+        clearTimeout(live.pong);
+        live.pong = setTimeout(function () {
+          socket.close();
+        }, 10000);
+      }, 30000);
+    };
+
+    socket.onmessage = function (event) {
+      if (event.data === "pong") return clearTimeout(live.pong);
+      var data;
+      try {
+        data = JSON.parse(event.data);
+      } catch (e) {
+        return;
+      }
+      if (data.type === "state") applyState(data, false);
+      else if (data.type === "screens") {
+        applyServerTime(data.serverTime);
+        screens = data.screens || [];
+        renderScreens();
+      } else if (data.type === "settings") {
+        renderHistory(data.history || []);
+        if (!saving) applySettings(Schedule.normalize(data.settings), false);
+      }
+    };
+
+    socket.onclose = function (event) {
+      if (live.socket !== socket) return; // replaced or stopped on purpose
+      live.socket = null;
+      clearInterval(live.ping);
+      clearTimeout(live.pong);
+      setLive(false);
+      if (appView.hidden) return; // signed out
+      // A rejected token closes the socket before it opens; let an HTTP call sort that out.
+      if (!event.wasClean && live.attempt > 2) refresh(false);
+      var delay = Math.min(60000, 1000 * Math.pow(2, live.attempt));
+      live.attempt += 1;
+      live.retry = setTimeout(connectLive, delay / 2 + Math.random() * (delay / 2));
+    };
+  }
+
+  function stopLive() {
+    clearTimeout(live.retry);
+    clearInterval(live.ping);
+    clearTimeout(live.pong);
+    var socket = live.socket;
+    live.socket = null;
+    if (socket) socket.close();
+    setLive(false);
+  }
+
+  function setLive(on) {
+    $("live").hidden = !on;
   }
 
   function save() {
@@ -387,7 +523,12 @@
         renderHistory(data.history || []);
         saving = false;
         onChange();
-        setStatus("Збережено. Телевізори застосують новий час протягом хвилини.", "ok");
+        setStatus(
+          data.delivered
+            ? "Збережено й одразу надіслано на " + tvCount(data.delivered) + "."
+            : "Збережено. Телевізори отримають новий час, щойно вийдуть на зв'язок.",
+          "ok"
+        );
       })
       .catch(function (error) {
         saving = false;
@@ -397,12 +538,17 @@
   }
 
   function reloadAll() {
-    if (!window.confirm("Перезавантажити сторінку на всіх телевізорах? Вони перезапустяться протягом хвилини.")) return;
+    if (!window.confirm("Перезавантажити сторінку на всіх телевізорах?")) return;
     var button = $("reload-all");
     button.disabled = true;
     api("POST", "/reload")
-      .then(function () {
-        setStatus("Команду надіслано. Телевізори перезавантажаться протягом хвилини.", "ok");
+      .then(function (data) {
+        setStatus(
+          data.delivered
+            ? "Перезавантажуємо " + tvCount(data.delivered) + "."
+            : "Команду збережено. Телевізори перезавантажаться, щойно вийдуть на зв'язок.",
+          "ok"
+        );
       })
       .catch(function (error) {
         handleError(error, "Не вдалося надіслати команду.");
@@ -412,16 +558,26 @@
       });
   }
 
+  function tvCount(n) {
+    var mod10 = n % 10;
+    var mod100 = n % 100;
+    var word =
+      mod10 === 1 && mod100 !== 11 ? "телевізор" : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14) ? "телевізори" : "телевізорів";
+    return n + " " + word;
+  }
+
   function start() {
     show("app");
     setStatus("Завантаження…");
     refresh(true).then(function () {
       if (status.textContent === "Завантаження…") setStatus("");
     });
+    connectLive();
     clearInterval(refreshTimer);
     refreshTimer = setInterval(function () {
-      if (document.visibilityState === "visible") refresh(false);
-    }, REFRESH_MS);
+      // Fallback while the live connection is down.
+      if (!live.socket && document.visibilityState === "visible") refresh(false);
+    }, FALLBACK_REFRESH_MS);
   }
 
   // ---------- Events ----------
@@ -459,6 +615,21 @@
   saveButton.addEventListener("click", save);
   $("reload-all").addEventListener("click", reloadAll);
 
+  // A forgotten background tab should not keep the server awake: drop the live connection
+  // after a while out of sight, and catch up as soon as the page is looked at again.
+  var hiddenTimer = null;
+  document.addEventListener("visibilitychange", function () {
+    if (appView.hidden) return;
+    clearTimeout(hiddenTimer);
+    if (document.visibilityState === "hidden") {
+      hiddenTimer = setTimeout(stopLive, HIDDEN_DISCONNECT_MS);
+    } else if (!live.socket) {
+      live.attempt = 0;
+      refresh(false);
+      connectLive();
+    }
+  });
+
   window.addEventListener("beforeunload", function (event) {
     var current = !appView.hidden && read();
     if (current && isDirty(current)) {
@@ -467,10 +638,12 @@
     }
   });
 
-  // Keep "now showing / black until" fresh while the page stays open.
+  // Keep "now showing / black until" and the "N min ago" texts fresh while the page stays open.
   setInterval(function () {
-    if (!appView.hidden) renderNowState(read() || saved);
-  }, REFRESH_MS);
+    if (appView.hidden) return;
+    renderNowState(read() || saved);
+    renderScreens();
+  }, CLOCK_MS);
 
   $("name-example").textContent =
     location.href.replace(/settings\.html.*$/, "") + "?name=Хол 1";

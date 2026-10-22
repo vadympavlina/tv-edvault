@@ -39,7 +39,7 @@
       <img class="head-logo" src="assets/logo.svg" alt="" width="40" height="48">
       <div class="head-text">
         <h1>Час роботи телевізорів</h1>
-        <p class="lead">Поза цим часом на екранах глибокий чорний. Телевізори застосовують зміни протягом хвилини.</p>
+        <p class="lead">Поза цим часом на екранах глибокий чорний. Телевізори отримують зміни одразу.</p>
       </div>
       <button id="logout" class="btn btn-ghost btn-small" type="button">Вийти</button>
     </header>
@@ -54,7 +54,11 @@
 
     <section class="card" aria-labelledby="screens-title">
       <div class="card-head">
-        <h2 id="screens-title">Телевізори</h2>
+        <div class="card-title">
+          <h2 id="screens-title">Телевізори</h2>
+          <span id="screens-count" class="count"></span>
+          <span id="live" class="live" hidden title="Статус оновлюється наживо">наживо</span>
+        </div>
         <button id="reload-all" class="btn btn-small" type="button">Перезавантажити всі</button>
       </div>
       <ul id="screens" class="screens"></ul>
