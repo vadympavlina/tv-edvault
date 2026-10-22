@@ -18,6 +18,10 @@ window.TV_CONFIG = {
   // and swapped in only once it has loaded, so the screen never flashes.
   refreshMinutes: 10,
 
+  // Every night at this time the app is swapped for a fresh copy (clears what the TV browser
+  // piles up over a day). Pick a time when the screen is black anyway. "" disables.
+  nightlyRestart: "03:00",
+
   // After the button has been pressed once on a TV, later visits (power cut, browser restart)
   // start by themselves after this many seconds. 0 disables auto-start.
   autostartSeconds: 15,

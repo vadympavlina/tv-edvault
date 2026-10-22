@@ -15,6 +15,14 @@
   var NIGHT_HINT_MS = 5000;
 
   var config = readConfig();
+  // Inside the shell (index.html) fullscreen, keep-awake and restarts belong to it.
+  var shell = (function () {
+    try {
+      return window.parent !== window && window.parent.TVShell ? window.parent.TVShell : null;
+    } catch (e) {
+      return null; // not our page around us
+    }
+  })();
 
   var body = document.body;
   var splash = document.getElementById("splash");
@@ -65,6 +73,8 @@
       // Testing only: pretend the clock shows this day/time, e.g. ?day=sat&time=21:30
       fakeTime: params.has("time") ? parseClock(params.get("time"), null) : null,
       fakeDay: params.has("day") ? Schedule.DAYS.indexOf(params.get("day")) : -1,
+      // Set by the shell when it swaps in a fresh copy: start straight away, no splash.
+      resume: params.get("resume") === "1",
     };
   }
 
@@ -152,7 +162,24 @@
   function checkReload(reloadAt) {
     reloadAt = reloadAt || 0;
     if (knownReloadAt === null) knownReloadAt = reloadAt;
-    else if (reloadAt > knownReloadAt) location.reload();
+    else if (reloadAt > knownReloadAt) {
+      knownReloadAt = reloadAt;
+      restart();
+    }
+  }
+
+  // The shell swaps in a fresh copy without leaving fullscreen; on our own, reload the page.
+  function restart() {
+    if (shell) shell.restartApp();
+    else location.reload();
+  }
+
+  // Tell the shell this copy has something to show, so it can be swapped in.
+  var readySent = false;
+  function signalReady() {
+    if (readySent || !shell) return;
+    readySent = true;
+    shell.ready(window);
   }
 
   // Hours, reload requests and the exact time from the settings server (see link.js); without
@@ -209,6 +236,7 @@
   // ---------- Keep the screen awake ----------
 
   function keepAwake() {
+    if (shell) return shell.keepAwake();
     var playing = keepalive.play();
     if (playing && playing.catch) playing.catch(function () {});
 
@@ -226,6 +254,7 @@
   }
 
   function enterFullscreen() {
+    if (shell) return shell.enterFullscreen(); // the key press counts for the shell too
     var el = document.documentElement;
     if (document.fullscreenElement || document.webkitFullscreenElement) return;
     try {
@@ -280,6 +309,7 @@
       blank(previous);
     }
     finishSplash();
+    signalReady();
   }
 
   function blank(frame) {
@@ -307,6 +337,7 @@
       body.classList.add("is-night");
       clearSchedule();
       finishSplash();
+      signalReady();
     } else if (day && isNight !== false) {
       isNight = false;
       dayStartedAt = Date.now();
@@ -435,9 +466,24 @@
 
   // ---------- Boot ----------
 
+  window.TVApp = {
+    userInput: onUserInput,
+    isRunning: function () {
+      return running;
+    },
+  };
+
   // Start the invisible video as early as the browser allows; it is muted, so autoplay is permitted.
   keepAwake();
   connect();
+
+  if (config.resume) {
+    // A fresh copy swapped in by the shell: the old one was already running.
+    splash.setAttribute("hidden", "");
+    splashDone = true;
+    launch();
+    return;
+  }
 
   // Let the intro animation finish before offering the button to the remote's OK key.
   setTimeout(function () {

@@ -19,6 +19,7 @@
   var FALLBACK_EVERY_MS = 5 * 60 * 1000;
   // Re-read the server clock now and then; TV clocks drift.
   var TIME_EVERY_MS = 6 * 60 * 60 * 1000;
+  var REPLACED_RETRY_MS = 3 * 60 * 1000;
 
   function start(options) {
     var apiUrl = options.apiUrl;
@@ -27,7 +28,8 @@
     var timers = {};
     var downSince = Date.now();
     var lastFallbackAt = 0;
-    var status = options.status();
+    var status = options.status(); // last state the server knows about
+    var announced = status; // state sent in the URL of the current connection
 
     function clear(name) {
       clearTimeout(timers[name]);
@@ -37,6 +39,7 @@
 
     function params() {
       var s = options.status();
+      announced = s;
       var q = {
         id: options.id,
         name: options.name || "",
@@ -70,9 +73,12 @@
         clear("connect");
         attempt = 0;
         downSince = 0;
+        // The state rode along in the URL; report it again if it changed while connecting
+        // (e.g. the app launched) or if the schedule is stuck.
         status = options.status();
-        // The state rode along in the URL; a stuck schedule has to be reported separately.
-        if (status.stale) sendJson(socket, { type: "status", state: status.state, stale: true });
+        if (status.state !== announced.state || status.stale) {
+          sendJson(socket, { type: "status", state: status.state, stale: status.stale });
+        }
         timers.ping = setInterval(function () {
           ping(socket);
         }, PING_MS);
@@ -92,11 +98,18 @@
         if (data.type && options.on[data.type]) options.on[data.type](data);
       };
 
-      socket.onclose = function () {
+      socket.onclose = function (event) {
         if (socket !== ws) return;
         ws = null;
         ["connect", "ping", "pong", "time"].forEach(clear);
         if (!downSince) downSince = Date.now();
+        if (event && event.code === 4000) {
+          // A newer copy of this TV took over (the shell is swapping in a fresh app). Fighting
+          // back would kick it off again; only return if it never got going.
+          clear("retry");
+          timers.retry = setTimeout(connect, REPLACED_RETRY_MS);
+          return;
+        }
         scheduleRetry();
       };
     }

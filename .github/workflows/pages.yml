@@ -78,8 +78,13 @@ jobs:
           API_URL: ${{ needs.worker.outputs.url || vars.TV_API_URL }}
         run: |
           mkdir _site
-          cp -r index.html settings.html *.js *.css settings.json assets .nojekyll _site/
+          cp -r *.html *.js *.css settings.json assets .nojekyll _site/
           printf 'window.TV_API_URL = "%s";\n' "$API_URL" > _site/api-url.js
+          # TVs compare this with the version they run and swap in the new app (shell.js).
+          VERSION="${GITHUB_SHA::12}"
+          printf '{"version":"%s"}\n' "$VERSION" > _site/version.json
+          # Versioned asset URLs, so a TV never mixes a new page with old scripts from its cache.
+          sed -i -E "s/(src|href)=\"([a-z-]+\.(js|css))\"/\1=\"\2?v=$VERSION\"/g" _site/*.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
