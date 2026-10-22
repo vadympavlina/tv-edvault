@@ -15,16 +15,74 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Settings server (worker/). Deployed only when the Cloudflare secrets and the admin password
+  # are set; without them TVs keep reading settings.json.
+  worker:
+    runs-on: ubuntu-latest
+    outputs:
+      url: ${{ steps.url.outputs.url }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      TV_ADMIN_PASSWORD: ${{ secrets.TV_ADMIN_PASSWORD }}
+    steps:
+      - name: Check secrets
+        id: check
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ] && [ -n "$TV_ADMIN_PASSWORD" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID or TV_ADMIN_PASSWORD is not set — skipping the settings server."
+          fi
+      - uses: actions/checkout@v5
+        if: steps.check.outputs.ready == 'true'
+      - uses: actions/setup-node@v5
+        if: steps.check.outputs.ready == 'true'
+        with:
+          node-version: 22
+      - name: Deploy worker
+        id: deploy
+        if: steps.check.outputs.ready == 'true'
+        working-directory: worker
+        run: |
+          npx -y wrangler@4 deploy | tee deploy.log
+          echo "url=$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' deploy.log | head -1)" >> "$GITHUB_OUTPUT"
+          printf '%s' "$TV_ADMIN_PASSWORD" | npx -y wrangler@4 secret put ADMIN_PASSWORD
+      - name: Worker URL
+        id: url
+        if: steps.check.outputs.ready == 'true'
+        env:
+          DEPLOYED: ${{ steps.deploy.outputs.url }}
+        run: |
+          url="$DEPLOYED"
+          if [ -z "$url" ]; then
+            sub=$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" | jq -r '.result.subdomain // empty') || sub=""
+            [ -n "$sub" ] && url="https://tv-edvault.$sub.workers.dev"
+          fi
+          echo "Settings server: $url"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
   deploy:
+    needs: worker
+    # Publish the site even if the worker deploy failed.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - name: Assemble site
+        env:
+          API_URL: ${{ needs.worker.outputs.url || vars.TV_API_URL }}
+        run: |
+          mkdir _site
+          cp -r index.html settings.html *.js *.css settings.json assets .nojekyll _site/
+          printf 'window.TV_API_URL = "%s";\n' "$API_URL" > _site/api-url.js
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4

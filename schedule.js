@@ -94,8 +94,9 @@
 
   // Current { day: 0 = Monday … 6 = Sunday, minutes since midnight } in the given time zone.
   // Falls back to the device clock if the browser does not know the zone.
-  function now(timeZone) {
-    var date = new Date();
+  // `offsetMs` corrects a TV whose own clock is wrong (server time minus device time).
+  function now(timeZone, offsetMs) {
+    var date = new Date(Date.now() + (offsetMs || 0));
     var day = (date.getDay() + 6) % 7;
     var h = date.getHours();
     var m = date.getMinutes();
@@ -123,7 +124,8 @@
     return { day: day, minutes: h * 60 + m };
   }
 
-  window.TVSchedule = {
+  // Also loaded by the Cloudflare Worker (worker/), where there is no `window`.
+  (typeof window !== "undefined" ? window : globalThis).TVSchedule = {
     now: now,
     DAYS: DAYS,
     DAY_NAMES: DAY_NAMES,

@@ -1,0 +1,19 @@
+# Settings server for the TV schedule screens (Cloudflare Worker).
+# Deployed by .github/workflows/pages.yml; ADMIN_PASSWORD is set there as a Worker secret.
+name = "tv-edvault"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[vars]
+# Origins allowed to call the admin routes with credentials.
+ALLOWED_ORIGINS = "https://vadympavlina.github.io,http://localhost:8765,http://localhost:8000"
+
+# All state lives in one Durable Object (free plan: SQLite-backed).
+[[durable_objects.bindings]]
+name = "HUB"
+class_name = "Hub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Hub"]

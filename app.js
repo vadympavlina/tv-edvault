@@ -3,6 +3,7 @@
 
   var STORAGE_KEY = "tv-schedule:launched";
   var SETTINGS_CACHE_KEY = "tv-schedule:settings";
+  var SCREEN_ID_KEY = "tv-schedule:screen-id";
   var Schedule = window.TVSchedule;
   var TICK_MS = 15 * 1000;
   var LOAD_TIMEOUT_MS = 60 * 1000;
@@ -34,7 +35,11 @@
   var nightHintTimer = null;
   var splashDone = false;
   var settings = cachedSettings();
-  var settingsLoadedAt = 0;
+  var lastSyncAt = 0;
+  var clockOffset = 0; // server time minus this TV's clock
+  var knownReloadAt = null;
+  var scheduleShownAt = 0;
+  var startedAt = Date.now();
 
   // ---------- Config ----------
 
@@ -47,8 +52,10 @@
     return {
       scheduleUrl: pick("url", base.scheduleUrl),
       rooms: pick("rooms", base.rooms),
-      settingsUrl: pick("settings", base.settingsUrl || "settings.json"),
-      settingsRefreshMinutes: toNumber(base.settingsRefreshMinutes, 2),
+      apiUrl: String(pick("api", window.TV_API_URL || "")).replace(/\/+$/, ""),
+      screenName: pick("name", ""),
+      settingsUrl: base.settingsUrl || "settings.json",
+      syncSeconds: toNumber(base.syncSeconds, 60),
       timeZone: pick("tz", base.timeZone),
       refreshMinutes: toNumber(pick("refresh", base.refreshMinutes), 10),
       autostartSeconds: toNumber(pick("autostart", base.autostartSeconds), 15),
@@ -83,7 +90,7 @@
   // ---------- Time ----------
 
   function now() {
-    var t = Schedule.now(config.timeZone);
+    var t = Schedule.now(config.timeZone, clockOffset);
     if (config.fakeDay !== -1) t.day = config.fakeDay;
     if (config.fakeTime !== null) t.minutes = config.fakeTime;
     return t;
@@ -93,7 +100,7 @@
     return Schedule.isOn(settings, t.day, t.minutes);
   }
 
-  // ---------- Weekly hours (settings.json) ----------
+  // ---------- Settings sync ----------
 
   function cachedSettings() {
     try {
@@ -103,23 +110,74 @@
     return Schedule.defaults();
   }
 
-  // Re-read settings.json; on any failure keep the last known hours.
-  function loadSettings() {
-    settingsLoadedAt = Date.now();
+  function applySettings(raw) {
+    settings = Schedule.normalize(raw);
+    try {
+      localStorage.setItem(SETTINGS_CACHE_KEY, JSON.stringify(settings));
+    } catch (e) {}
+    tick();
+  }
+
+  function screenId() {
+    try {
+      var id = localStorage.getItem(SCREEN_ID_KEY);
+      if (!id) {
+        id = Math.random().toString(36).slice(2, 10);
+        localStorage.setItem(SCREEN_ID_KEY, id);
+      }
+      return id;
+    } catch (e) {
+      return "";
+    }
+  }
+
+  // Ask the settings server for hours, reload requests and the exact time; report how this TV is
+  // doing. Without a server (or when it is down) fall back to the static settings.json.
+  function sync() {
+    lastSyncAt = Date.now();
     if (!window.fetch) return;
+    if (!config.apiUrl) return loadStaticSettings();
+
+    var sentAt = Date.now();
+    fetch(config.apiUrl + "/tv", {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "text/plain" }, // a "simple" request: no CORS preflight
+      body: JSON.stringify({
+        id: screenId(),
+        name: config.screenName,
+        state: !running ? "splash" : isNight ? "night" : "schedule",
+        scheduleLoadedAt: scheduleShownAt,
+        startedAt: startedAt,
+        size: window.screen ? screen.width + "×" + screen.height : "",
+      }),
+    })
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      })
+      .then(function (data) {
+        if (data.serverTime) {
+          // Half the round trip is the best guess for when the server read its clock.
+          clockOffset = data.serverTime - (sentAt + (Date.now() - sentAt) / 2);
+        }
+        if (knownReloadAt === null) knownReloadAt = data.reloadAt || 0;
+        else if ((data.reloadAt || 0) > knownReloadAt) return location.reload();
+
+        if (data.settings) applySettings(data.settings);
+        else loadStaticSettings(); // server has nothing saved yet
+      })
+      .catch(loadStaticSettings);
+  }
+
+  function loadStaticSettings() {
     var url = config.settingsUrl + (config.settingsUrl.indexOf("?") === -1 ? "?" : "&") + "t=" + Date.now();
     fetch(url, { cache: "no-store" })
       .then(function (res) {
         if (!res.ok) throw new Error("HTTP " + res.status);
         return res.json();
       })
-      .then(function (raw) {
-        settings = Schedule.normalize(raw);
-        try {
-          localStorage.setItem(SETTINGS_CACHE_KEY, JSON.stringify(settings));
-        } catch (e) {}
-        tick();
-      })
+      .then(applySettings)
       .catch(function () {});
   }
 
@@ -190,6 +248,7 @@
     pendingFrame = null;
     var previous = activeFrame;
     activeFrame = frame;
+    scheduleShownAt = Date.now();
     frame.classList.add("is-active");
     if (previous && previous !== frame) {
       previous.classList.remove("is-active");
@@ -216,8 +275,6 @@
   function tick() {
     if (!running) return;
     keepAwake();
-
-    if (Date.now() - settingsLoadedAt >= config.settingsRefreshMinutes * 60 * 1000) loadSettings();
 
     var day = isDaytime(now());
     if (!day && isNight !== true) {
@@ -348,7 +405,10 @@
 
   // Start the invisible video as early as the browser allows; it is muted, so autoplay is permitted.
   keepAwake();
-  loadSettings();
+  sync();
+  setInterval(function () {
+    if (Date.now() - lastSyncAt >= config.syncSeconds * 1000 - 500) sync();
+  }, 5000);
 
   // Let the intro animation finish before offering the button to the remote's OK key.
   setTimeout(function () {

@@ -10,13 +10,38 @@
   <link rel="stylesheet" href="settings.css">
 </head>
 <body>
-  <main class="page">
+  <!-- Sign in -->
+  <main id="login-view" class="login" hidden>
+    <form id="login-form" class="card login-card" autocomplete="on">
+      <img class="login-logo" src="assets/logo.svg" alt="IT STEP Academy" width="64" height="77">
+      <h1>Налаштування телевізорів</h1>
+      <label class="field">
+        <span>Пароль</span>
+        <input id="password" type="password" autocomplete="current-password" required autofocus>
+      </label>
+      <button id="login-button" class="btn btn-primary btn-wide" type="submit">Увійти</button>
+      <p id="login-error" class="form-error" role="alert"></p>
+    </form>
+  </main>
+
+  <!-- Server not connected yet -->
+  <main id="setup-view" class="login" hidden>
+    <section class="card login-card">
+      <img class="login-logo" src="assets/logo.svg" alt="" width="64" height="77">
+      <h1>Сервер налаштувань ще не підключено</h1>
+      <p class="muted">Його розгортає GitHub Actions, щойно в репозиторії з'являться секрети Cloudflare і пароль. Телевізори тим часом працюють за збереженим раніше часом.</p>
+    </section>
+  </main>
+
+  <!-- Settings -->
+  <main id="app-view" class="page" hidden>
     <header class="head">
       <img class="head-logo" src="assets/logo.svg" alt="" width="40" height="48">
-      <div>
+      <div class="head-text">
         <h1>Час роботи телевізорів</h1>
-        <p class="lead">Поза цим часом на екранах глибокий чорний. Телевізори підхоплюють зміни самі, протягом кількох хвилин.</p>
+        <p class="lead">Поза цим часом на екранах глибокий чорний. Телевізори застосовують зміни протягом хвилини.</p>
       </div>
+      <button id="logout" class="btn btn-ghost btn-small" type="button">Вийти</button>
     </header>
 
     <section class="card" aria-labelledby="week-title">
@@ -27,39 +52,26 @@
       <ol id="week" class="week"></ol>
     </section>
 
-    <section id="access" class="card access" aria-labelledby="access-title">
+    <section class="card" aria-labelledby="screens-title">
       <div class="card-head">
-        <h2 id="access-title">Доступ для збереження</h2>
+        <h2 id="screens-title">Телевізори</h2>
+        <button id="reload-all" class="btn btn-small" type="button">Перезавантажити всі</button>
       </div>
+      <ul id="screens" class="screens"></ul>
+      <p id="screens-empty" class="muted" hidden>Поки жоден телевізор не на зв'язку. Щойно на ТВ відкриють розклад, він з'явиться тут.</p>
+      <p class="hint">Щоб ТВ мав зрозумілу назву, відкрийте на ньому адресу з <code>?name=</code>, наприклад <code id="name-example"></code></p>
+    </section>
 
-      <div id="access-off">
-        <p class="muted">Зміни записуються у файл <code>settings.json</code> репозиторію на GitHub. Для цього потрібен токен, його вводять один раз, і він зберігається лише в цьому браузері.</p>
-        <form id="token-form" class="token-form" autocomplete="off">
-          <label class="field">
-            <span>GitHub-токен</span>
-            <input id="token" type="password" placeholder="github_pat_…" spellcheck="false" autocomplete="new-password" required>
-          </label>
-          <button class="btn" type="submit">Зберегти доступ</button>
-        </form>
-        <details class="help">
-          <summary>Як отримати токен</summary>
-          <ol>
-            <li>Відкрийте <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub → Fine-grained token</a>.</li>
-            <li><b>Repository access</b>: Only select repositories → <code>tv-edvault</code>.</li>
-            <li><b>Permissions → Repository → Contents</b>: Read and write.</li>
-            <li>Натисніть <b>Generate token</b> і вставте його сюди.</li>
-          </ol>
-        </details>
+    <section class="card" aria-labelledby="history-title">
+      <div class="card-head">
+        <h2 id="history-title">Історія змін</h2>
       </div>
-
-      <div id="access-on" class="access-on" hidden>
-        <p class="muted"><span class="dot" aria-hidden="true"></span> Доступ збережено в цьому браузері.</p>
-        <button id="forget" class="btn btn-ghost" type="button">Вийти</button>
-      </div>
+      <ol id="history" class="history"></ol>
+      <p id="history-empty" class="muted" hidden>Змін ще не було.</p>
     </section>
   </main>
 
-  <footer class="savebar">
+  <footer id="savebar" class="savebar" hidden>
     <div class="savebar-inner">
       <p id="status" class="status" role="status" aria-live="polite"></p>
       <button id="save" class="btn btn-primary" type="button" disabled>Зберегти</button>
@@ -89,6 +101,7 @@
   </template>
 
   <script src="config.js"></script>
+  <script src="api-url.js"></script>
   <script src="schedule.js"></script>
   <script src="settings.js"></script>
 </body>

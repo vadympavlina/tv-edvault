@@ -76,6 +76,16 @@ code {
   margin-bottom: 8px;
 }
 
+.head-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.head .btn {
+  flex: none;
+  align-self: flex-start;
+}
+
 .head-logo {
   flex: none;
   width: 40px;
@@ -338,26 +348,54 @@ h2 {
   font-size: 14px;
 }
 
-/* ---------- Access ---------- */
+/* ---------- Sign in ---------- */
 
-.token-form {
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-  flex-wrap: wrap;
+.login {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 400px;
+  display: grid;
+  gap: 16px;
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.login-card h1 {
+  font-size: 22px;
+}
+
+.login-card .muted {
+  margin: 0;
+}
+
+.login-card .field {
+  text-align: left;
+}
+
+.login-logo {
+  justify-self: center;
+  width: 64px;
+  height: 77px;
+  margin-bottom: 4px;
+  filter: brightness(0) invert(1);
 }
 
 .field {
   display: grid;
   gap: 6px;
-  flex: 1 1 260px;
   font-size: 14px;
   color: var(--ink-dim);
 }
 
 .field input {
-  min-height: 44px;
-  padding: 8px 12px;
+  min-height: 48px;
+  padding: 8px 14px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.04);
@@ -372,46 +410,93 @@ h2 {
   border-color: transparent;
 }
 
-.help {
-  margin-top: 16px;
-  color: var(--ink-dim);
+.form-error {
+  min-height: 1.5em;
+  margin: 0;
+  color: var(--error);
   font-size: 15px;
 }
 
-.help summary {
-  cursor: pointer;
-  color: var(--ink);
+.form-error:empty {
+  min-height: 0;
 }
 
-.help ol {
-  margin: 8px 0 0;
-  padding-left: 20px;
+/* ---------- Screens ---------- */
+
+.screens,
+.history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
-.help li + li {
-  margin-top: 4px;
-}
-
-.access-on {
+.screen,
+.history-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  flex-wrap: wrap;
+  padding: 12px 0;
+  border-top: 1px solid var(--card-line);
 }
 
-.access-on .muted {
-  margin: 0;
+.screen:first-child,
+.history-item:first-child {
+  border-top: 0;
 }
 
-.dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  margin-right: 6px;
+.screen-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
+  background: var(--ink-faint);
+}
+
+.screen.is-online .screen-dot {
   background: var(--ok);
-  vertical-align: 1px;
+  box-shadow: 0 0 0 4px rgba(62, 207, 142, 0.18);
+}
+
+.screen-main,
+.history-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.screen-name {
+  font-weight: 600;
+}
+
+.screen-meta,
+.history-what {
+  color: var(--ink-dim);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.screen-state {
+  flex: none;
+  color: var(--ink-faint);
+  font-size: 13px;
+}
+
+.screen.is-online .screen-state {
+  color: var(--ok);
+}
+
+.hint {
+  margin: 12px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--card-line);
+  color: var(--ink-faint);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.history-when {
+  font-size: 14px;
+  font-weight: 600;
 }
 
 /* ---------- Buttons ---------- */
@@ -460,6 +545,16 @@ h2 {
 
 .btn-ghost {
   background: transparent;
+}
+
+.btn-small {
+  min-height: 36px;
+  padding: 6px 14px;
+  font-size: 14px;
+}
+
+.btn-wide {
+  width: 100%;
 }
 
 /* ---------- Save bar ---------- */

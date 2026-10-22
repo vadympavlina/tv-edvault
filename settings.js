@@ -1,58 +1,104 @@
 (function () {
   "use strict";
 
-  var TOKEN_KEY = "tv-schedule:github-token";
-  var PUBLISH_POLL_MS = 5000;
-  var PUBLISH_TIMEOUT_MS = 4 * 60 * 1000;
+  var SESSION_KEY = "tv-schedule:session";
+  var REFRESH_MS = 30 * 1000;
+  // A TV checks in every minute; after this long without news it is shown as offline.
+  var OFFLINE_AFTER_MS = 3 * 60 * 1000;
+  var STEP_MINUTES = 15;
+  var SHORT_DAYS = { mon: "Пн", tue: "Вт", wed: "Ср", thu: "Чт", fri: "Пт", sat: "Сб", sun: "Нд" };
 
   var Schedule = window.TVSchedule;
   var config = window.TV_CONFIG || {};
-  var repo = config.github || {};
-  var apiUrl = "https://api.github.com/repos/" + repo.owner + "/" + repo.repo + "/contents/" + repo.path;
+  var apiUrl = String(new URLSearchParams(location.search).get("api") || window.TV_API_URL || "").replace(/\/+$/, "");
 
-  var week = document.getElementById("week");
-  var rowTemplate = document.getElementById("day-row");
-  var nowState = document.getElementById("now-state");
-  var saveButton = document.getElementById("save");
-  var status = document.getElementById("status");
-  var accessOff = document.getElementById("access-off");
-  var accessOn = document.getElementById("access-on");
-  var tokenForm = document.getElementById("token-form");
-  var tokenInput = document.getElementById("token");
-  var forgetButton = document.getElementById("forget");
+  var $ = function (id) {
+    return document.getElementById(id);
+  };
+  var loginView = $("login-view");
+  var setupView = $("setup-view");
+  var appView = $("app-view");
+  var savebar = $("savebar");
+  var week = $("week");
+  var rowTemplate = $("day-row");
+  var nowState = $("now-state");
+  var saveButton = $("save");
+  var status = $("status");
+  var screensList = $("screens");
+  var historyList = $("history");
 
-  var saved = Schedule.defaults(); // what is in the repository
+  var saved = Schedule.defaults(); // what the TVs currently use
   var rows = {};
   var saving = false;
+  var clockOffset = 0;
+  var refreshTimer = null;
 
-  // ---------- Token ----------
+  // ---------- Session ----------
 
-  function getToken() {
+  function session() {
     try {
-      return localStorage.getItem(TOKEN_KEY) || "";
+      var s = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
+      return s && s.expires > Date.now() ? s : null;
     } catch (e) {
-      return "";
+      return null;
     }
   }
 
-  function setToken(value) {
+  function setSession(value) {
     try {
-      if (value) localStorage.setItem(TOKEN_KEY, value);
-      else localStorage.removeItem(TOKEN_KEY);
+      if (value) localStorage.setItem(SESSION_KEY, JSON.stringify(value));
+      else localStorage.removeItem(SESSION_KEY);
     } catch (e) {}
-    renderAccess();
   }
 
-  function renderAccess() {
-    var has = !!getToken();
-    accessOff.hidden = has;
-    accessOn.hidden = !has;
-    updateSaveButton();
+  function show(view) {
+    loginView.hidden = view !== "login";
+    setupView.hidden = view !== "setup";
+    appView.hidden = view !== "app";
+    savebar.hidden = view !== "app";
+  }
+
+  function signOut(message) {
+    clearInterval(refreshTimer);
+    setSession(null);
+    show("login");
+    $("login-error").textContent = message || "";
+    $("password").focus();
+  }
+
+  // ---------- Server ----------
+
+  function api(method, path, body) {
+    var s = session();
+    var headers = { "Content-Type": "application/json" };
+    if (s) headers.Authorization = "Bearer " + s.token;
+    return fetch(apiUrl + path, {
+      method: method,
+      cache: "no-store",
+      headers: headers,
+      body: body ? JSON.stringify(body) : undefined,
+    }).then(function (res) {
+      return res
+        .json()
+        .catch(function () {
+          return {};
+        })
+        .then(function (data) {
+          if (res.ok) return data;
+          var error = new Error(data.error || "HTTP " + res.status);
+          error.status = res.status;
+          error.code = data.error;
+          throw error;
+        });
+    });
+  }
+
+  function handleError(error, fallback) {
+    if (error.status === 401) return signOut("Сесія завершилась, увійдіть ще раз.");
+    setStatus(fallback + (navigator.onLine === false ? " Немає інтернету." : " Спробуйте ще раз."), "error");
   }
 
   // ---------- Week form ----------
-
-  var STEP_MINUTES = 15;
 
   // Selects instead of <input type="time">: the native picker shows AM/PM on some systems.
   function addTimeOptions(select, from, to) {
@@ -62,7 +108,7 @@
     }
   }
 
-  // A time typed into settings.json by hand may sit between steps; keep it selectable.
+  // A time saved earlier may sit between steps; keep it selectable.
   function setTime(select, value) {
     var exists = Array.prototype.some.call(select.options, function (o) {
       return o.value === value;
@@ -133,7 +179,7 @@
       row.node.classList.toggle("is-invalid", enabled && !ok);
       row.error.hidden = !enabled || ok;
       if (enabled && !ok) valid = false;
-      // A switched-off day with half-typed times keeps its last saved times.
+      // A switched-off day with a broken range keeps its last saved times.
       result.days[day] = {
         enabled: enabled,
         on: ok ? Schedule.formatClock(on) : saved.days[day].on,
@@ -162,18 +208,13 @@
   function onChange() {
     var current = read();
     renderNowState(current || saved);
-    updateSaveButton();
+    saveButton.disabled = saving || !current || !isDirty(current);
     if (!saving && current && isDirty(current)) setStatus("Є незбережені зміни");
-    else if (!saving && current) setStatus("");
-  }
-
-  function updateSaveButton() {
-    var current = read();
-    saveButton.disabled = saving || !current || !isDirty(current) || !getToken();
+    else if (!saving && current && status.dataset.kind !== "ok") setStatus("");
   }
 
   function renderNowState(settings) {
-    var t = Schedule.now(config.timeZone);
+    var t = Schedule.now(config.timeZone, clockOffset);
     var on = Schedule.isOn(settings, t.day, t.minutes);
     nowState.classList.toggle("is-on", on);
     if (on) {
@@ -186,183 +227,240 @@
 
   function setStatus(text, kind) {
     status.textContent = text;
+    status.dataset.kind = kind || "";
     status.classList.toggle("is-ok", kind === "ok");
     status.classList.toggle("is-error", kind === "error");
   }
 
-  // ---------- GitHub ----------
-
-  function api(method, body) {
-    var url = apiUrl + (method === "GET" ? "?ref=" + encodeURIComponent(repo.branch) + "&t=" + Date.now() : "");
-    return fetch(url, {
-      method: method,
-      cache: "no-store",
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: "Bearer " + getToken(),
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-      body: body ? JSON.stringify(body) : undefined,
-    }).then(function (res) {
-      if (res.ok) return res.json();
-      var error = new Error("HTTP " + res.status);
-      error.status = res.status;
-      throw error;
-    });
-  }
-
-  function decode(base64) {
-    var bytes = Uint8Array.from(atob(base64.replace(/\s/g, "")), function (c) {
-      return c.charCodeAt(0);
-    });
-    return new TextDecoder().decode(bytes);
-  }
-
-  function encode(text) {
-    var bytes = new TextEncoder().encode(text);
-    var binary = "";
-    bytes.forEach(function (b) {
-      binary += String.fromCharCode(b);
-    });
-    return btoa(binary);
-  }
-
-  function describeError(error) {
-    if (error.status === 401) return "Токен недійсний або прострочений. Натисніть «Вийти» і введіть новий.";
-    if (error.status === 403 || error.status === 404)
-      return "У токена немає доступу на запис до репозиторію " + repo.repo + " (потрібно Contents: Read and write).";
-    if (error.status === 409 || error.status === 422) return "Файл щойно змінили в іншому місці. Спробуйте зберегти ще раз.";
-    return "Не вдалося зберегти (" + (error.message || "помилка мережі") + "). Перевірте інтернет і спробуйте ще раз.";
-  }
-
   function summary(settings) {
-    var short = { mon: "Пн", tue: "Вт", wed: "Ср", thu: "Чт", fri: "Пт", sat: "Сб", sun: "Нд" };
     return Schedule.DAYS.map(function (day) {
       var d = settings.days[day];
-      return short[day] + " " + (d.enabled ? d.on + "–" + d.off : "вимк.");
-    }).join(", ");
+      return SHORT_DAYS[day] + " " + (d.enabled ? d.on + "–" + d.off : "вимк.");
+    }).join(" · ");
+  }
+
+  // ---------- Screens ----------
+
+  function ago(ms) {
+    var min = Math.round(ms / 60000);
+    if (min < 1) return "щойно";
+    if (min < 60) return min + " хв тому";
+    var h = Math.round(min / 60);
+    if (h < 24) return h + " год тому";
+    return Math.round(h / 24) + " дн тому";
+  }
+
+  function renderScreens(screens, serverTime) {
+    screensList.textContent = "";
+    $("screens-empty").hidden = screens.length > 0;
+    screens.forEach(function (screen) {
+      var online = serverTime - screen.lastSeen < OFFLINE_AFTER_MS;
+      var li = document.createElement("li");
+      li.className = "screen" + (online ? " is-online" : "");
+
+      var dot = document.createElement("span");
+      dot.className = "screen-dot";
+      dot.setAttribute("aria-hidden", "true");
+
+      var main = document.createElement("div");
+      main.className = "screen-main";
+      var name = document.createElement("span");
+      name.className = "screen-name";
+      name.textContent = screen.name || "ТВ " + screen.id.slice(0, 4).toUpperCase();
+      var meta = document.createElement("span");
+      meta.className = "screen-meta";
+      var parts = [];
+      if (!online) parts.push("не на зв'язку, востаннє " + ago(serverTime - screen.lastSeen));
+      else if (screen.state === "schedule")
+        parts.push("показує розклад" + (screen.scheduleLoadedAt ? ", оновлено " + ago(Date.now() - screen.scheduleLoadedAt) : ""));
+      else if (screen.state === "night") parts.push("чорний екран");
+      else if (screen.state === "splash") parts.push("заставка, розклад не запущено");
+      if (screen.size) parts.push(screen.size);
+      meta.textContent = parts.join(" · ");
+      main.appendChild(name);
+      main.appendChild(meta);
+
+      var state = document.createElement("span");
+      state.className = "screen-state";
+      state.textContent = online ? "онлайн" : "офлайн";
+
+      li.appendChild(dot);
+      li.appendChild(main);
+      li.appendChild(state);
+      screensList.appendChild(li);
+    });
+  }
+
+  // ---------- History ----------
+
+  function formatDate(ms) {
+    try {
+      return new Intl.DateTimeFormat("uk-UA", {
+        timeZone: config.timeZone,
+        day: "numeric",
+        month: "long",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(new Date(ms));
+    } catch (e) {
+      return new Date(ms).toLocaleString();
+    }
+  }
+
+  function renderHistory(history) {
+    historyList.textContent = "";
+    $("history-empty").hidden = history.length > 0;
+    history.slice(0, 10).forEach(function (entry, index) {
+      var li = document.createElement("li");
+      li.className = "history-item";
+      var text = document.createElement("div");
+      text.className = "history-text";
+      var when = document.createElement("span");
+      when.className = "history-when";
+      when.textContent = formatDate(entry.at) + (index === 0 ? " · зараз діє" : "");
+      var what = document.createElement("span");
+      what.className = "history-what";
+      what.textContent = summary(entry.settings);
+      text.appendChild(when);
+      text.appendChild(what);
+      li.appendChild(text);
+      if (index > 0) {
+        var restore = document.createElement("button");
+        restore.type = "button";
+        restore.className = "btn btn-small btn-ghost";
+        restore.textContent = "Повернути";
+        restore.addEventListener("click", function () {
+          fill(Schedule.normalize(entry.settings));
+          setStatus("Підставлено час від " + formatDate(entry.at) + ". Натисніть «Зберегти», щоб застосувати.");
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        });
+        li.appendChild(restore);
+      }
+      historyList.appendChild(li);
+    });
+  }
+
+  // ---------- Loading & saving ----------
+
+  function loadStaticSettings() {
+    return fetch((config.settingsUrl || "settings.json") + "?t=" + Date.now(), { cache: "no-store" })
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      })
+      .then(Schedule.normalize)
+      .catch(Schedule.defaults);
+  }
+
+  // first: also replace the form with what the server has (later refreshes keep unsaved edits).
+  function refresh(first) {
+    return api("GET", "/admin")
+      .then(function (data) {
+        clockOffset = data.serverTime ? data.serverTime - Date.now() : 0;
+        renderScreens(data.screens || [], data.serverTime || Date.now());
+        renderHistory(data.history || []);
+        // Nothing saved on the server yet: start from the hours the TVs use today.
+        return (data.settings ? Promise.resolve(Schedule.normalize(data.settings)) : loadStaticSettings()).then(
+          function (settings) {
+            var current = read();
+            var untouched = current && !isDirty(current);
+            saved = settings;
+            if (first || untouched) fill(settings);
+            else onChange();
+          }
+        );
+      })
+      .catch(function (error) {
+        handleError(error, "Не вдалося отримати дані з сервера.");
+      });
   }
 
   function save() {
     var current = read();
     if (!current || saving) return;
     saving = true;
-    updateSaveButton();
+    saveButton.disabled = true;
     setStatus("Збереження…");
-
-    var text = JSON.stringify(current, null, 2) + "\n";
-    // Always fetch the latest sha right before writing, so an edit from another browser is not lost silently.
-    api("GET")
-      .then(function (file) {
-        return api("PUT", {
-          message: "Час роботи ТВ: " + summary(current),
-          content: encode(text),
-          sha: file.sha,
-          branch: repo.branch,
-        });
-      })
-      .then(function () {
-        saved = current;
-        setStatus("Збережено. Публікуємо на сайті…");
-        return waitForPublish(current);
-      })
-      .then(function (published) {
-        setStatus(
-          published
-            ? "Готово. Телевізори застосують новий час протягом " + (config.settingsRefreshMinutes || 2) + " хв."
-            : "Збережено. Публікація триває довше звичайного, телевізори підхоплять зміни трохи пізніше.",
-          "ok"
-        );
+    api("PUT", "/settings", current)
+      .then(function (data) {
+        saved = Schedule.normalize(data.settings);
+        renderHistory(data.history || []);
+        saving = false;
+        onChange();
+        setStatus("Збережено. Телевізори застосують новий час протягом хвилини.", "ok");
       })
       .catch(function (error) {
-        setStatus(describeError(error), "error");
+        saving = false;
+        onChange();
+        handleError(error, "Не вдалося зберегти.");
+      });
+  }
+
+  function reloadAll() {
+    if (!window.confirm("Перезавантажити сторінку на всіх телевізорах? Вони перезапустяться протягом хвилини.")) return;
+    var button = $("reload-all");
+    button.disabled = true;
+    api("POST", "/reload")
+      .then(function () {
+        setStatus("Команду надіслано. Телевізори перезавантажаться протягом хвилини.", "ok");
+      })
+      .catch(function (error) {
+        handleError(error, "Не вдалося надіслати команду.");
       })
       .then(function () {
-        saving = false;
-        updateSaveButton();
+        button.disabled = false;
       });
   }
 
-  // Waits until the published settings.json (what TVs read) matches what was saved.
-  function waitForPublish(expected) {
-    var started = Date.now();
-    var want = JSON.stringify(expected);
-    return new Promise(function (resolve) {
-      function poll() {
-        fetchPublished()
-          .then(function (published) {
-            if (JSON.stringify(published) === want) resolve(true);
-            else retry();
-          })
-          .catch(retry);
-      }
-      function retry() {
-        if (Date.now() - started > PUBLISH_TIMEOUT_MS) resolve(false);
-        else setTimeout(poll, PUBLISH_POLL_MS);
-      }
-      poll();
-    });
-  }
-
-  function fetchPublished() {
-    return fetch(config.settingsUrl + "?t=" + Date.now(), { cache: "no-store" })
-      .then(function (res) {
-        if (!res.ok) throw new Error("HTTP " + res.status);
-        return res.json();
-      })
-      .then(Schedule.normalize);
-  }
-
-  // Prefer the repository copy (always the newest); fall back to the published file.
-  function loadInitial() {
+  function start() {
+    show("app");
     setStatus("Завантаження…");
-    var source = getToken()
-      ? api("GET").then(function (file) {
-          return Schedule.normalize(JSON.parse(decode(file.content)));
-        })
-      : Promise.reject();
-    return source
-      .catch(fetchPublished)
-      .then(function (settings) {
-        saved = settings;
-        fill(settings);
-        setStatus("");
-      })
-      .catch(function () {
-        fill(saved);
-        setStatus("Не вдалося завантажити поточні налаштування, показано стандартні 08:00–20:00.", "error");
-      });
+    refresh(true).then(function () {
+      if (status.textContent === "Завантаження…") setStatus("");
+    });
+    clearInterval(refreshTimer);
+    refreshTimer = setInterval(function () {
+      if (document.visibilityState === "visible") refresh(false);
+    }, REFRESH_MS);
   }
 
   // ---------- Events ----------
 
-  tokenForm.addEventListener("submit", function (event) {
+  $("login-form").addEventListener("submit", function (event) {
     event.preventDefault();
-    var value = tokenInput.value.trim();
-    if (!value) return;
-    tokenInput.value = "";
-    setToken(value);
-    setStatus("Перевіряємо доступ…");
-    api("GET")
-      .then(function () {
-        setStatus("Доступ працює.", "ok");
-        updateSaveButton();
+    var button = $("login-button");
+    var error = $("login-error");
+    button.disabled = true;
+    error.textContent = "";
+    api("POST", "/login", { password: $("password").value })
+      .then(function (data) {
+        setSession({ token: data.token, expires: data.expires });
+        $("password").value = "";
+        start();
       })
-      .catch(function (error) {
-        setToken("");
-        setStatus(describeError(error), "error");
+      .catch(function (e) {
+        error.textContent =
+          e.code === "wrong_password"
+            ? "Неправильний пароль."
+            : e.code === "too_many_attempts"
+            ? "Забагато спроб. Зачекайте 15 хвилин."
+            : e.code === "password_not_set"
+            ? "На сервері ще не задано пароль."
+            : "Сервер недоступний. Перевірте інтернет і спробуйте ще раз.";
+      })
+      .then(function () {
+        button.disabled = false;
       });
   });
 
-  forgetButton.addEventListener("click", function () {
-    setToken("");
-    setStatus("Доступ видалено з цього браузера.");
+  $("logout").addEventListener("click", function () {
+    signOut("");
   });
-
   saveButton.addEventListener("click", save);
+  $("reload-all").addEventListener("click", reloadAll);
 
   window.addEventListener("beforeunload", function (event) {
-    var current = read();
+    var current = !appView.hidden && read();
     if (current && isDirty(current)) {
       event.preventDefault();
       event.returnValue = "";
@@ -371,10 +469,14 @@
 
   // Keep "now showing / black until" fresh while the page stays open.
   setInterval(function () {
-    renderNowState(read() || saved);
-  }, 30 * 1000);
+    if (!appView.hidden) renderNowState(read() || saved);
+  }, REFRESH_MS);
+
+  $("name-example").textContent =
+    location.href.replace(/settings\.html.*$/, "") + "?name=Хол 1";
 
   buildWeek();
-  renderAccess();
-  loadInitial();
+  if (!apiUrl) show("setup");
+  else if (session()) start();
+  else show("login");
 })();
