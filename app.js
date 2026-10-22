@@ -2,6 +2,8 @@
   "use strict";
 
   var STORAGE_KEY = "tv-schedule:launched";
+  var SETTINGS_CACHE_KEY = "tv-schedule:settings";
+  var Schedule = window.TVSchedule;
   var TICK_MS = 15 * 1000;
   var LOAD_TIMEOUT_MS = 60 * 1000;
   // Give the schedule's own scripts a moment to render before swapping it in.
@@ -31,6 +33,8 @@
   var countdownTimer = null;
   var nightHintTimer = null;
   var splashDone = false;
+  var settings = cachedSettings();
+  var settingsLoadedAt = 0;
 
   // ---------- Config ----------
 
@@ -43,13 +47,14 @@
     return {
       scheduleUrl: pick("url", base.scheduleUrl),
       rooms: pick("rooms", base.rooms),
-      on: parseClock(pick("on", base.on), 8 * 60),
-      off: parseClock(pick("off", base.off), 20 * 60),
+      settingsUrl: pick("settings", base.settingsUrl || "settings.json"),
+      settingsRefreshMinutes: toNumber(base.settingsRefreshMinutes, 2),
       timeZone: pick("tz", base.timeZone),
       refreshMinutes: toNumber(pick("refresh", base.refreshMinutes), 10),
       autostartSeconds: toNumber(pick("autostart", base.autostartSeconds), 15),
-      // Testing only: pretend the clock shows this time, e.g. ?time=21:30
+      // Testing only: pretend the clock shows this day/time, e.g. ?day=sat&time=21:30
       fakeTime: params.has("time") ? parseClock(params.get("time"), null) : null,
+      fakeDay: params.has("day") ? Schedule.DAYS.indexOf(params.get("day")) : -1,
     };
   }
 
@@ -67,16 +72,6 @@
     return isFinite(n) && n >= 0 ? n : fallback;
   }
 
-  function formatClock(minutes) {
-    var h = Math.floor(minutes / 60) % 24;
-    var m = minutes % 60;
-    return pad(h) + ":" + pad(m);
-  }
-
-  function pad(n) {
-    return (n < 10 ? "0" : "") + n;
-  }
-
   function scheduleSrc() {
     var url = config.scheduleUrl;
     if (config.rooms) {
@@ -87,40 +82,45 @@
 
   // ---------- Time ----------
 
-  var clockFormat = (function () {
-    try {
-      return new Intl.DateTimeFormat("en-GB", {
-        timeZone: config.timeZone || undefined,
-        hour: "2-digit",
-        minute: "2-digit",
-        hourCycle: "h23",
-      });
-    } catch (e) {
-      // Unknown time zone on an old TV browser: fall back to the device clock.
-      return null;
-    }
-  })();
-
-  function minutesNow() {
-    if (config.fakeTime !== null) return config.fakeTime;
-    var now = new Date();
-    if (clockFormat && clockFormat.formatToParts) {
-      var h = 0;
-      var m = 0;
-      clockFormat.formatToParts(now).forEach(function (part) {
-        if (part.type === "hour") h = Number(part.value) % 24;
-        if (part.type === "minute") m = Number(part.value);
-      });
-      return h * 60 + m;
-    }
-    return now.getHours() * 60 + now.getMinutes();
+  function now() {
+    var t = Schedule.now(config.timeZone);
+    if (config.fakeDay !== -1) t.day = config.fakeDay;
+    if (config.fakeTime !== null) t.minutes = config.fakeTime;
+    return t;
   }
 
-  function isDaytime(minutes) {
-    if (config.on === config.off) return true;
-    if (config.on < config.off) return minutes >= config.on && minutes < config.off;
-    // Window that crosses midnight, e.g. on=20:00 off=02:00.
-    return minutes >= config.on || minutes < config.off;
+  function isDaytime(t) {
+    return Schedule.isOn(settings, t.day, t.minutes);
+  }
+
+  // ---------- Weekly hours (settings.json) ----------
+
+  function cachedSettings() {
+    try {
+      var raw = localStorage.getItem(SETTINGS_CACHE_KEY);
+      if (raw) return Schedule.normalize(JSON.parse(raw));
+    } catch (e) {}
+    return Schedule.defaults();
+  }
+
+  // Re-read settings.json; on any failure keep the last known hours.
+  function loadSettings() {
+    settingsLoadedAt = Date.now();
+    if (!window.fetch) return;
+    var url = config.settingsUrl + (config.settingsUrl.indexOf("?") === -1 ? "?" : "&") + "t=" + Date.now();
+    fetch(url, { cache: "no-store" })
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      })
+      .then(function (raw) {
+        settings = Schedule.normalize(raw);
+        try {
+          localStorage.setItem(SETTINGS_CACHE_KEY, JSON.stringify(settings));
+        } catch (e) {}
+        tick();
+      })
+      .catch(function () {});
   }
 
   // ---------- Keep the screen awake ----------
@@ -217,7 +217,9 @@
     if (!running) return;
     keepAwake();
 
-    var day = isDaytime(minutesNow());
+    if (Date.now() - settingsLoadedAt >= config.settingsRefreshMinutes * 60 * 1000) loadSettings();
+
+    var day = isDaytime(now());
     if (!day && isNight !== true) {
       isNight = true;
       body.classList.add("is-night");
@@ -244,8 +246,10 @@
   }
 
   function showNightHint() {
-    nightClock.textContent = formatClock(minutesNow());
-    nightText.textContent = "Розклад увімкнеться о " + formatClock(config.on);
+    var t = now();
+    var next = Schedule.nextStart(settings, t.day, t.minutes);
+    nightClock.textContent = Schedule.formatClock(t.minutes);
+    nightText.textContent = next ? "Розклад увімкнеться " + next : "";
     night.classList.add("show-hint");
     clearTimeout(nightHintTimer);
     nightHintTimer = setTimeout(function () {
@@ -344,6 +348,7 @@
 
   // Start the invisible video as early as the browser allows; it is muted, so autoplay is permitted.
   keepAwake();
+  loadSettings();
 
   // Let the intro animation finish before offering the button to the remote's OK key.
   setTimeout(function () {

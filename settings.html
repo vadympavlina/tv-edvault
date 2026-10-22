@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#00060f">
+  <meta name="robots" content="noindex">
+  <title>Налаштування · Розклад IT STEP</title>
+  <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <main class="page">
+    <header class="head">
+      <img class="head-logo" src="assets/logo.svg" alt="" width="40" height="48">
+      <div>
+        <h1>Час роботи телевізорів</h1>
+        <p class="lead">Поза цим часом на екранах глибокий чорний. Телевізори підхоплюють зміни самі, протягом кількох хвилин.</p>
+      </div>
+    </header>
+
+    <section class="card" aria-labelledby="week-title">
+      <div class="card-head">
+        <h2 id="week-title">Тиждень</h2>
+        <span id="now-state" class="now-state"></span>
+      </div>
+      <ol id="week" class="week"></ol>
+    </section>
+
+    <section id="access" class="card access" aria-labelledby="access-title">
+      <div class="card-head">
+        <h2 id="access-title">Доступ для збереження</h2>
+      </div>
+
+      <div id="access-off">
+        <p class="muted">Зміни записуються у файл <code>settings.json</code> репозиторію на GitHub. Для цього потрібен токен, його вводять один раз, і він зберігається лише в цьому браузері.</p>
+        <form id="token-form" class="token-form" autocomplete="off">
+          <label class="field">
+            <span>GitHub-токен</span>
+            <input id="token" type="password" placeholder="github_pat_…" spellcheck="false" autocomplete="new-password" required>
+          </label>
+          <button class="btn" type="submit">Зберегти доступ</button>
+        </form>
+        <details class="help">
+          <summary>Як отримати токен</summary>
+          <ol>
+            <li>Відкрийте <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub → Fine-grained token</a>.</li>
+            <li><b>Repository access</b>: Only select repositories → <code>tv-edvault</code>.</li>
+            <li><b>Permissions → Repository → Contents</b>: Read and write.</li>
+            <li>Натисніть <b>Generate token</b> і вставте його сюди.</li>
+          </ol>
+        </details>
+      </div>
+
+      <div id="access-on" class="access-on" hidden>
+        <p class="muted"><span class="dot" aria-hidden="true"></span> Доступ збережено в цьому браузері.</p>
+        <button id="forget" class="btn btn-ghost" type="button">Вийти</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="savebar">
+    <div class="savebar-inner">
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <button id="save" class="btn btn-primary" type="button" disabled>Зберегти</button>
+    </div>
+  </footer>
+
+  <template id="day-row">
+    <li class="day">
+      <label class="switch">
+        <input class="day-enabled" type="checkbox">
+        <span class="switch-track" aria-hidden="true"></span>
+        <span class="day-name"></span>
+        <span class="today-badge" hidden>сьогодні</span>
+      </label>
+      <div class="day-times">
+        <label class="time"><span class="sr-only">Вмикати о</span><select class="day-on"></select></label>
+        <span class="dash" aria-hidden="true">–</span>
+        <label class="time"><span class="sr-only">Вимикати о</span><select class="day-off"></select></label>
+        <span class="day-offline">Вимкнено весь день</span>
+      </div>
+      <button class="copy" type="button" title="Скопіювати цей час на всі дні">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
+        <span class="sr-only">Скопіювати на всі дні</span>
+      </button>
+      <p class="day-error" hidden>Час вимкнення має бути пізніше за час увімкнення</p>
+    </li>
+  </template>
+
+  <script src="config.js"></script>
+  <script src="schedule.js"></script>
+  <script src="settings.js"></script>
+</body>
+</html>
