@@ -79,6 +79,7 @@
   }
 
   function tvCount(n) {
+    if (n === 1) return "телевізор";
     var mod10 = n % 10;
     var mod100 = n % 100;
     var word =
@@ -332,7 +333,7 @@
       .then(function (data) {
         state.override = Schedule.normalizeOverride(data.override);
         renderNow();
-        var where = data.delivered ? " Надіслано на " + tvCount(data.delivered) + "." : "";
+        var where = data.delivered ? " Телевізор уже отримав." : " Телевізор отримає, щойно вийде на зв'язок.";
         toast((state.override ? "Готово." : "Повернули звичайний розклад.") + where, "ok");
       })
       .catch(function (error) {
@@ -732,196 +733,291 @@
     renderCalendar();
   }
 
-  // ---------- Screens ----------
+  // ---------- The TV ----------
+
+  var STATE_TEXT = {
+    schedule: "показує розклад",
+    night: "чорний екран",
+    splash: "заставка, розклад не запущено",
+    offline: "не на зв'язку",
+    unknown: "на зв'язку",
+  };
+  var EVENT_TEXT = {
+    schedule: "Показує розклад",
+    night: "Чорний екран",
+    splash: "Заставка, розклад не запущено",
+    offline: "Зник зв'язок",
+    unknown: "На зв'язку",
+  };
+  var DAY_MS = 24 * 60 * 60 * 1000;
+  var PREVIEW_REFRESH_MS = 10 * 60 * 1000;
+  var previewLoadedAt = 0;
 
   function screenTitle(screen) {
-    return screen.label || screen.name || "ТВ " + screen.id.slice(0, 4).toUpperCase();
+    return screen.label || screen.name || "Телевізор";
   }
 
-  // Problems first: offline, then stuck schedules, then the rest by name.
-  function sortedScreens() {
-    var rank = function (s) {
-      return !s.online ? 0 : s.stale ? 1 : 2;
-    };
+  // The TV this page is about: the one on air, else the one heard from last.
+  function primaryScreen() {
     return state.screens.slice().sort(function (a, b) {
-      return rank(a) - rank(b) || screenTitle(a).localeCompare(screenTitle(b), "uk");
+      return (b.online ? 1 : 0) - (a.online ? 1 : 0) || b.lastSeen - a.lastSeen;
+    })[0];
+  }
+
+  function serverNow() {
+    return Date.now() + state.clockOffset;
+  }
+
+  function clockAt(ms) {
+    return Schedule.formatClock(Schedule.at(ms, tz).minutes);
+  }
+
+  // "08:00", "вчора 22:10", "21 жовтня 22:10"
+  function stampText(ms) {
+    var today = moment().date;
+    var at = Schedule.at(ms, tz);
+    if (at.date === today) return clockAt(ms);
+    if (at.date === Schedule.addDays(today, -1)) return "вчора " + clockAt(ms);
+    return Schedule.formatDate(at.date) + " " + clockAt(ms);
+  }
+
+  function renderTv() {
+    var screen = primaryScreen();
+    var now = serverNow();
+    var online = !!(screen && screen.online);
+    var shown = !screen ? "none" : !online ? "offline" : screen.state;
+
+    $("online-count").textContent = !screen ? "ТВ ще не підключено" : online ? "ТВ на зв'язку" : "ТВ не на зв'язку";
+    $("online-pill").className = "pill" + (online && !screen.stale ? " is-ok" : screen ? " is-warning" : "");
+
+    $("tv-empty").hidden = !!screen;
+    $("tv-reload").disabled = !online;
+    $("tv-rename").hidden = !screen;
+    $("tv-dot").className = "screen-dot" + (online ? (screen.stale ? " is-warning" : " is-online") : "");
+    $("tv-name").textContent = screen ? screenTitle(screen) : "Телевізор";
+    $("tv-state").textContent = !screen
+      ? "ще не виходив на зв'язок"
+      : !online
+      ? "не на зв'язку, востаннє " + ago(now - screen.lastSeen)
+      : screen.stale && screen.state === "schedule"
+      ? "розклад давно не оновлювався"
+      : STATE_TEXT[screen.state] || STATE_TEXT.unknown;
+    $("tv-state").classList.toggle("is-warning", !!screen && (!online || !!screen.stale));
+
+    $("tv-loaded").textContent = screen && screen.loadedAt ? ago(now - screen.loadedAt) + " (" + stampText(screen.loadedAt) + ")" : "—";
+    $("tv-uptime").textContent =
+      online && screen.connectedAt ? "з " + stampText(screen.connectedAt) + " · " + duration(now - screen.connectedAt) : online ? "так" : "ні";
+    $("tv-size").textContent = (screen && screen.size) || "—";
+
+    renderPreview(screen, shown);
+    renderTimeline(screen, now);
+    renderOthers(screen, now);
+  }
+
+  // ---------- Preview ----------
+
+  // The schedule page loaded here at the TV's own size and scaled down; black screen, splash and
+  // "offline" are drawn. So it shows roughly what is on the TV, without touching the TV.
+  function renderPreview(screen, shown) {
+    var box = $("preview");
+    var frame = $("preview-frame");
+    var size = /^(\d+)\D+(\d+)$/.exec((screen && screen.size) || "") || [0, 1920, 1080];
+    var w = Number(size[1]) || 1920;
+    var h = Number(size[2]) || 1080;
+    box.style.setProperty("--ratio", w + " / " + h);
+
+    var showSchedule = shown === "schedule";
+    frame.hidden = !showSchedule;
+    $("preview-night").hidden = shown !== "night";
+    $("preview-splash").hidden = shown !== "splash";
+    $("preview-offline").hidden = shown !== "offline" && shown !== "none";
+    $("preview-clock").textContent = clockAt(serverNow());
+
+    if (showSchedule) {
+      var scale = box.clientWidth / w || 0.2;
+      frame.style.width = w + "px";
+      frame.style.height = h + "px";
+      frame.style.transform = "scale(" + scale + ")";
+      // Load once it is needed, then refresh about as often as the TV does.
+      if (!previewLoadedAt || Date.now() - previewLoadedAt > PREVIEW_REFRESH_MS) {
+        previewLoadedAt = Date.now();
+        var url = config.scheduleUrl || "";
+        if (config.rooms) url += (url.indexOf("?") === -1 ? "?" : "&") + "rooms=" + config.rooms;
+        frame.src = url;
+      }
+    } else if (previewLoadedAt) {
+      previewLoadedAt = 0;
+      frame.removeAttribute("src");
+    }
+  }
+
+  // ---------- Connection over 24 hours ----------
+
+  // Pieces of the last 24 hours: [{from, to, s}] where s is what the TV showed or "offline";
+  // "none" before anything is known.
+  function segments(screen, now) {
+    var start = now - DAY_MS;
+    var events = (screen && screen.events) || [];
+    var result = [];
+    var current = "none";
+    var from = start;
+    events.forEach(function (e) {
+      if (e.at <= start) {
+        current = e.s;
+        return;
+      }
+      if (e.at > now) return;
+      if (e.at > from) result.push({ from: from, to: e.at, s: current });
+      current = e.s;
+      from = e.at;
+    });
+    // Up to now: what the TV says at this moment.
+    if (screen) current = screen.online ? screen.state : "offline";
+    result.push({ from: from, to: now, s: current });
+    return result.filter(function (seg) {
+      return seg.to > seg.from;
     });
   }
 
-  // `brief`: only what the TV shows, for the short list at the top.
-  function screenDetails(screen, now, brief) {
-    if (!screen.online) return "не на зв'язку, востаннє " + ago(now - screen.lastSeen);
-    var parts = [];
-    if (screen.state === "schedule") parts.push(screen.stale ? "розклад давно не оновлювався" : "показує розклад");
-    else if (screen.state === "night") parts.push("чорний екран");
-    else if (screen.state === "splash") parts.push("заставка, розклад не запущено");
-    if (brief) return parts.join(" · ");
-    if (screen.transport === "http") parts.push("без постійного з'єднання");
-    else if (screen.connectedAt) parts.push("на зв'язку " + duration(now - screen.connectedAt));
-    return parts.join(" · ");
+  function renderTimeline(screen, now) {
+    var start = now - DAY_MS;
+    var bar = $("timeline-bar");
+    var ticks = $("timeline-ticks");
+    bar.textContent = "";
+    ticks.textContent = "";
+    var parts = segments(screen, now);
+    var offlineMs = 0;
+    var drops = 0;
+    parts.forEach(function (seg, i) {
+      var piece = el("span", "seg seg-" + seg.s);
+      piece.style.left = ((seg.from - start) / DAY_MS) * 100 + "%";
+      piece.style.width = ((seg.to - seg.from) / DAY_MS) * 100 + "%";
+      piece.title =
+        stampText(seg.from) + " – " + (i === parts.length - 1 ? "зараз" : stampText(seg.to)) + ": " + (seg.s === "none" ? "даних немає" : EVENT_TEXT[seg.s] || seg.s);
+      bar.appendChild(piece);
+      if (seg.s === "offline") {
+        offlineMs += seg.to - seg.from;
+        drops += 1;
+      }
+    });
+    // Hour marks every 3 hours on the real clock.
+    var first = Schedule.at(start, tz);
+    var hourStart = start - (first.minutes % 60) * 60000 + 60 * 60000;
+    for (var t = hourStart; t <= now; t += 60 * 60000) {
+      var hour = Math.floor(Schedule.at(t, tz).minutes / 60);
+      if (hour % 3) continue;
+      var tick = el("span", "tick", (hour < 10 ? "0" : "") + hour);
+      tick.style.left = ((t - start) / DAY_MS) * 100 + "%";
+      ticks.appendChild(tick);
+    }
+    $("uptime-summary").textContent = !screen
+      ? ""
+      : drops
+      ? "без зв'язку " + duration(offlineMs) + " · " + drops + " " + (drops === 1 ? "раз" : drops < 5 ? "рази" : "разів")
+      : "без перерв";
+    $("uptime-summary").classList.toggle("is-warning", drops > 0);
+    renderEvents(screen, now);
   }
 
-  function screenClass(screen) {
-    return "screen" + (screen.online ? " is-online" : "") + (screen.online && screen.stale ? " is-warning" : "");
+  function renderEvents(screen, now) {
+    var list = $("events");
+    list.textContent = "";
+    var events = ((screen && screen.events) || []).filter(function (e) {
+      return now - e.at < DAY_MS;
+    });
+    events
+      .slice(-8)
+      .reverse()
+      .forEach(function (e, i, shown) {
+        var before = shown[i + 1];
+        var back = before && before.s === "offline" && e.s !== "offline";
+        var li = el("li", "event event-" + e.s);
+        li.appendChild(el("span", "event-time", stampText(e.at)));
+        li.appendChild(el("span", "event-text", (back ? "Знову на зв'язку · " : "") + (EVENT_TEXT[e.s] || e.s)));
+        list.appendChild(li);
+      });
   }
 
-  function renderScreens() {
-    var now = Date.now() + state.clockOffset;
-    var list = sortedScreens();
-    var online = list.filter(function (s) {
-      return s.online;
-    }).length;
-    var problems = list.length - list.filter(function (s) {
-      return s.online && !s.stale;
-    }).length;
-
-    $("online-count").textContent = list.length ? online + " з " + list.length + " онлайн" : "немає ТВ";
-    $("online-pill").className = "pill" + (list.length && !problems ? " is-ok" : problems ? " is-warning" : "");
-    $("screens-count").hidden = !list.length;
-    $("screens-count").textContent = online + "/" + list.length;
-
-    // At a glance: up to four, problems first.
-    var glance = $("glance-list");
-    glance.textContent = "";
-    $("glance-empty").hidden = list.length > 0;
-    $("glance-all").hidden = list.length <= 4;
-    $("glance-all").textContent = "Усі телевізори (" + list.length + ") →";
-    list.slice(0, 4).forEach(function (screen) {
-      var li = el("li", screenClass(screen));
+  // Other devices that once opened the schedule (a reset TV browser gets a new id).
+  function renderOthers(primary, now) {
+    var others = state.screens.filter(function (s) {
+      return s !== primary;
+    });
+    $("others").hidden = !others.length;
+    $("others-title").textContent = "Інші пристрої (" + others.length + ")";
+    var list = $("others-list");
+    list.textContent = "";
+    others.forEach(function (screen) {
+      var li = el("li", "screen" + (screen.online ? " is-online" : ""));
       li.appendChild(el("span", "screen-dot"));
       var main = el("div", "screen-main");
       main.appendChild(el("span", "screen-name", screenTitle(screen)));
-      main.appendChild(el("span", "screen-meta", screenDetails(screen, now, true)));
+      main.appendChild(
+        el("span", "screen-meta", screen.online ? STATE_TEXT[screen.state] || "на зв'язку" : "не на зв'язку, востаннє " + ago(now - screen.lastSeen))
+      );
       li.appendChild(main);
-      if (screen.online && screen.transport !== "http") li.appendChild(reloadButton(screen, true));
-      glance.appendChild(li);
-    });
-
-    // Full list
-    var full = $("screens");
-    full.textContent = "";
-    $("screens-empty").hidden = list.length > 0;
-    list.forEach(function (screen) {
-      var li = el("li", screenClass(screen));
-      li.appendChild(el("span", "screen-dot"));
-      var main = el("div", "screen-main");
-      var name = el("span", "screen-name", screenTitle(screen));
-      main.appendChild(name);
-      var meta = screenDetails(screen, now) + (screen.size ? " · " + screen.size : "");
-      main.appendChild(el("span", "screen-meta", meta));
-      li.appendChild(main);
-
-      var actions = el("div", "screen-actions");
-      var rename = el("button", "btn btn-small btn-ghost", "Перейменувати");
-      rename.type = "button";
-      rename.addEventListener("click", function () {
-        startRename(screen, li, name);
-      });
-      actions.appendChild(rename);
-      if (screen.online && screen.transport !== "http") actions.appendChild(reloadButton(screen, false));
       if (!screen.online) {
         var forget = el("button", "btn btn-small btn-ghost", "Прибрати");
         forget.type = "button";
-        forget.title = "Прибрати зі списку. Якщо цей ТВ знову вийде на зв'язок, він з'явиться сам.";
         forget.addEventListener("click", function () {
           forgetScreen(screen, forget);
         });
-        actions.appendChild(forget);
+        li.appendChild(forget);
       }
-      li.appendChild(actions);
-      full.appendChild(li);
-    });
-  }
-
-  function reloadButton(screen, compact) {
-    var button = el("button", compact ? "icon-btn" : "btn btn-small btn-ghost", compact ? "⟳" : "Перезавантажити");
-    button.type = "button";
-    button.title = "Перезавантажити «" + screenTitle(screen) + "»";
-    button.setAttribute("aria-label", button.title);
-    button.addEventListener("click", function () {
-      button.disabled = true;
-      api("POST", "/screens/reload", { id: screen.id })
-        .then(function (data) {
-          toast(data.delivered ? "«" + screenTitle(screen) + "» перезавантажується." : "Цей ТВ зараз не на зв'язку.", data.delivered ? "ok" : "");
-        })
-        .catch(function (error) {
-          handleError(error, "Не вдалося перезавантажити.");
-        })
-        .then(function () {
-          button.disabled = false;
-        });
-    });
-    return button;
-  }
-
-  function startRename(screen, li, nameNode) {
-    var form = el("form", "rename");
-    var input = el("input");
-    input.type = "text";
-    input.maxLength = 60;
-    input.value = screen.label || screen.name || "";
-    input.placeholder = "Наприклад: Хол 1 поверх";
-    input.setAttribute("aria-label", "Нова назва");
-    var ok = el("button", "btn btn-small btn-primary", "Зберегти");
-    ok.type = "submit";
-    var cancel = el("button", "btn btn-small btn-ghost", "Скасувати");
-    cancel.type = "button";
-    form.appendChild(input);
-    form.appendChild(ok);
-    form.appendChild(cancel);
-    nameNode.replaceWith(form);
-    li.classList.add("is-renaming");
-    input.focus();
-    input.select();
-    cancel.addEventListener("click", renderScreens);
-    form.addEventListener("submit", function (event) {
-      event.preventDefault();
-      ok.disabled = true;
-      api("POST", "/screens/rename", { id: screen.id, label: input.value })
-        .then(function (data) {
-          state.screens = data.screens || state.screens;
-          renderScreens();
-          toast("Назву змінено.", "ok");
-        })
-        .catch(function (error) {
-          ok.disabled = false;
-          handleError(error, "Не вдалося перейменувати.");
-        });
+      list.appendChild(li);
     });
   }
 
   function forgetScreen(screen, button) {
-    if (!window.confirm("Прибрати «" + screenTitle(screen) + "» зі списку?")) return;
     button.disabled = true;
     api("POST", "/screens/forget", { id: screen.id })
       .then(function (data) {
         state.screens = data.screens || [];
-        renderScreens();
+        renderTv();
       })
       .catch(function (error) {
         button.disabled = false;
-        handleError(error, error.code === "screen_online" ? "Цей телевізор знову на зв'язку." : "Не вдалося прибрати телевізор.");
+        handleError(error, error.code === "screen_online" ? "Цей пристрій знову на зв'язку." : "Не вдалося прибрати.");
       });
   }
 
-  function reloadAll() {
-    if (!window.confirm("Перезавантажити сторінку на всіх телевізорах?")) return;
-    var button = $("reload-all");
+  function reloadTv() {
+    var button = $("tv-reload");
     button.disabled = true;
     api("POST", "/reload")
       .then(function (data) {
-        toast(
-          data.delivered
-            ? "Перезавантажуємо " + tvCount(data.delivered) + "."
-            : "Команду збережено. Телевізори перезавантажаться, щойно вийдуть на зв'язок.",
-          "ok"
-        );
+        toast(data.delivered ? "Телевізор перезавантажується." : "Телевізор перезавантажиться, щойно вийде на зв'язок.", "ok");
       })
       .catch(function (error) {
-        handleError(error, "Не вдалося надіслати команду.");
+        handleError(error, "Не вдалося перезавантажити.");
       })
       .then(function () {
-        button.disabled = false;
+        renderTv();
+      });
+  }
+
+  function startRename() {
+    var screen = primaryScreen();
+    if (!screen) return;
+    $("tv-rename-form").hidden = false;
+    $("tv-rename-input").value = screen.label || screen.name || "";
+    $("tv-rename-input").focus();
+    $("tv-rename-input").select();
+  }
+
+  function submitRename(event) {
+    event.preventDefault();
+    var screen = primaryScreen();
+    if (!screen) return;
+    api("POST", "/screens/rename", { id: screen.id, label: $("tv-rename-input").value })
+      .then(function (data) {
+        state.screens = data.screens || state.screens;
+        $("tv-rename-form").hidden = true;
+        renderTv();
+        toast("Назву змінено.", "ok");
+      })
+      .catch(function (error) {
+        handleError(error, "Не вдалося перейменувати.");
       });
   }
 
@@ -1021,7 +1117,7 @@
     state.override = Schedule.normalizeOverride(data.override);
     state.screens = data.screens || [];
     state.history = data.history || [];
-    renderScreens();
+    renderTv();
     renderHistory();
     // Nothing saved on the server yet: start from the hours the TVs use today.
     return (data.settings ? Promise.resolve(Schedule.normalize(data.settings)) : loadStaticSettings()).then(receiveSettings);
@@ -1105,7 +1201,7 @@
       else if (data.type === "screens") {
         if (data.serverTime) state.clockOffset = data.serverTime - Date.now();
         state.screens = data.screens || [];
-        if (!document.querySelector(".rename")) renderScreens(); // do not wipe a name being typed
+        renderTv();
       } else if (data.type === "override") {
         state.override = Schedule.normalizeOverride(data.override);
         renderNow();
@@ -1191,10 +1287,11 @@
   });
   $("save").addEventListener("click", save);
   $("discard").addEventListener("click", discard);
-  $("reload-all").addEventListener("click", reloadAll);
-  $("glance-all").addEventListener("click", function () {
-    showTab("screens");
-    document.querySelector(".tabs-card").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("tv-reload").addEventListener("click", reloadTv);
+  $("tv-rename").addEventListener("click", startRename);
+  $("tv-rename-form").addEventListener("submit", submitRename);
+  $("tv-rename-cancel").addEventListener("click", function () {
+    $("tv-rename-form").hidden = true;
   });
   $("override-cancel").addEventListener("click", function () {
     setOverride(null, null, this);
@@ -1246,10 +1343,9 @@
     if ($("app-view").hidden) return;
     renderNow();
     renderWeek();
-    if (!document.querySelector(".rename")) renderScreens();
+    renderTv();
   }, CLOCK_MS);
 
-  $("name-example").textContent = location.href.replace(/settings\.html.*$/, "") + "?name=Хол 1";
 
   buildWeek();
   buildDates();

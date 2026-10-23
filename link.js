@@ -76,8 +76,8 @@
         // The state rode along in the URL; report it again if it changed while connecting
         // (e.g. the app launched) or if the schedule is stuck.
         status = options.status();
-        if (status.state !== announced.state || status.stale) {
-          sendJson(socket, { type: "status", state: status.state, stale: status.stale });
+        if (status.state !== announced.state || status.stale || status.loadedAt) {
+          sendJson(socket, { type: "status", state: status.state, stale: status.stale, loadedAt: status.loadedAt });
         }
         timers.ping = setInterval(function () {
           ping(socket);
@@ -192,9 +192,9 @@
       // Tell the server about a change in what the TV shows.
       status: function () {
         var s = options.status();
-        if (s.state === status.state && s.stale === status.stale) return;
+        if (s.state === status.state && s.stale === status.stale && s.loadedAt === status.loadedAt) return;
         status = s;
-        sendJson(ws, { type: "status", state: s.state, stale: s.stale });
+        sendJson(ws, { type: "status", state: s.state, stale: s.stale, loadedAt: s.loadedAt });
       },
     };
   }

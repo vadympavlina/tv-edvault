@@ -22,6 +22,11 @@ window.TV_CONFIG = {
   // piles up over a day). Pick a time when the screen is black anyway. "" disables.
   nightlyRestart: "03:00",
 
+  // Burn-in protection: the picture drifts by up to this many pixels, one small step every
+  // `shiftMinutes`. 0 disables.
+  shiftPixels: 4,
+  shiftMinutes: 4,
+
   // After the button has been pressed once on a TV, later visits (power cut, browser restart)
   // start by themselves after this many seconds. 0 disables auto-start.
   autostartSeconds: 15,

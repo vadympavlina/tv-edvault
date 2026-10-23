@@ -37,6 +37,10 @@ const HTTP_ONLINE_MS = 7 * 60 * 1000;
 const SWEEP_MS = 60 * 1000;
 const SCREEN_FORGET_MS = 30 * 24 * 60 * 60 * 1000;
 const STATES = ["schedule", "night", "splash"];
+// Per-TV log of what it showed and when it was offline, for the 24-hour strip on the settings
+// page. Kept a little longer than shown so the strip always knows how the window began.
+const EVENTS_KEEP_MS = 48 * 60 * 60 * 1000;
+const EVENTS_MAX = 500;
 // Special dates are kept this long after they end, then dropped on the next save.
 const KEEP_PAST_EXCEPTIONS_DAYS = 60;
 // A manual override may not reach further than this.
@@ -160,6 +164,7 @@ export class Hub {
     };
     server.serializeAttachment(screen);
     await this.ctx.storage.put("screen:" + id, screen);
+    await this.logEvent(id, screen.connectedAt, screen.state);
 
     send(server, { type: "hello", ...(await this.tvState()) });
     await this.broadcastScreens();
@@ -179,9 +184,11 @@ export class Hub {
       const screen = ws.deserializeAttachment() || {};
       if (STATES.includes(data.state)) screen.state = data.state;
       if (typeof data.stale === "boolean") screen.stale = data.stale;
+      if (Number(data.loadedAt) > 0) screen.loadedAt = Number(data.loadedAt);
       screen.lastSeen = Date.now();
       ws.serializeAttachment(screen);
       await this.ctx.storage.put("screen:" + screen.id, screen);
+      await this.logEvent(screen.id, screen.lastSeen, screen.state);
       await this.broadcastScreens();
     } else if (data.type === "time") {
       send(ws, { type: "time", serverTime: Date.now() });
@@ -207,6 +214,7 @@ export class Hub {
     screen.lastSeen = this.lastHeard(ws, screen);
     screen.offlineSince = Date.now();
     await this.ctx.storage.put("screen:" + screen.id, screen);
+    await this.logEvent(screen.id, screen.lastSeen, "offline");
     await this.broadcastScreens();
   }
 
@@ -230,6 +238,7 @@ export class Hub {
         screen.offlineSince = now;
         ws.serializeAttachment(screen);
         await this.ctx.storage.put("screen:" + screen.id, screen);
+        await this.logEvent(screen.id, heard, "offline");
         safeClose(ws, 4001, "stale");
         changed = true;
       }
@@ -264,6 +273,11 @@ export class Hub {
         transport: "http",
       };
       await this.ctx.storage.put("screen:" + id, screen);
+      // A long gap between check-ins means it was offline in between.
+      if (stored.lastSeen && screen.lastSeen - stored.lastSeen > HTTP_ONLINE_MS) {
+        await this.logEvent(id, stored.lastSeen, "offline");
+      }
+      await this.logEvent(id, screen.lastSeen, screen.state);
       if (stored.state !== screen.state || stored.transport !== "http") await this.broadcastScreens();
     }
     return this.tvState();
@@ -283,6 +297,22 @@ export class Hub {
   async override() {
     const override = Schedule.normalizeOverride(await this.ctx.storage.get("override"));
     return override && override.until > Date.now() ? override : null;
+  }
+
+  // ---------- Events ----------
+
+  async logEvent(id, at, state) {
+    const key = "events:" + id;
+    const events = (await this.ctx.storage.get(key)) || [];
+    const last = events[events.length - 1];
+    if (last && last.s === state) return; // only changes matter
+    events.push({ at, s: state });
+    events.sort((a, b) => a.at - b.at);
+    // Drop what is too old, but keep the last event before the cut: it says how the window began.
+    const cut = Date.now() - EVENTS_KEEP_MS;
+    let first = 0;
+    while (first < events.length - 1 && events[first + 1].at < cut) first++;
+    await this.ctx.storage.put(key, events.slice(first).slice(-EVENTS_MAX));
   }
 
   // ---------- Screens list ----------
@@ -307,6 +337,7 @@ export class Hub {
       }
     }
     for (const screen of live.values()) result.push(screen);
+    for (const screen of result) screen.events = (await this.ctx.storage.get("events:" + screen.id)) || [];
     return result
       .map(({ ip, ...screen }) => screen) // the settings page has no use for addresses
       .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id, "uk"));
@@ -463,7 +494,7 @@ export class Hub {
     const id = cleanText(body.id, 40);
     if (!id) throw new HttpError(400, "id_required");
     if (openSockets(this.ctx, "tv:" + id).length) throw new HttpError(409, "screen_online");
-    await this.ctx.storage.delete("screen:" + id);
+    await this.ctx.storage.delete(["screen:" + id, "events:" + id]);
     await this.broadcastScreens();
     return { screens: await this.screens() };
   }

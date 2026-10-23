@@ -4,6 +4,7 @@
   var STORAGE_KEY = "tv-schedule:launched";
   var SETTINGS_CACHE_KEY = "tv-schedule:settings";
   var OVERRIDE_CACHE_KEY = "tv-schedule:override";
+  var SHELL_RELOAD_KEY = "tv-schedule:shell-reload";
   var STATIC_SETTINGS_EVERY_MS = 5 * 60 * 1000;
   var STALE_MIN_MS = 30 * 60 * 1000;
   var SCREEN_ID_KEY = "tv-schedule:screen-id";
@@ -81,6 +82,8 @@
       fakeDay: params.has("day") ? Schedule.DAYS.indexOf(params.get("day")) : -1,
       // Set by the shell when it swaps in a fresh copy: start straight away, no splash.
       resume: params.get("resume") === "1",
+      shiftPixels: toNumber(pick("shift", base.shiftPixels), 4),
+      shiftMinutes: Math.max(1, toNumber(base.shiftMinutes, 4)),
     };
   }
 
@@ -170,6 +173,7 @@
     return {
       state: !running ? "splash" : isNight ? "night" : "schedule",
       stale: stale,
+      loadedAt: scheduleShownAt, // when the schedule on screen was last (re)loaded
       size: window.screen ? screen.width + "×" + screen.height : "",
       startedAt: startedAt,
     };
@@ -288,6 +292,47 @@
         : el.webkitRequestFullscreen && el.webkitRequestFullscreen();
       if (req && req.catch) req.catch(function () {});
     } catch (e) {}
+  }
+
+  // A shell from before shell-core.js cannot update itself. Reload the whole page once, while
+  // the screen is black anyway; from then on the shell updates on the fly.
+  function replaceOldShell() {
+    if (!shell || shell.apiVersion) return;
+    try {
+      var last = Number(localStorage.getItem(SHELL_RELOAD_KEY)) || 0;
+      if (Date.now() - last < 12 * 60 * 60 * 1000) return;
+      localStorage.setItem(SHELL_RELOAD_KEY, String(Date.now()));
+      window.parent.location.reload();
+    } catch (e) {}
+  }
+
+  // ---------- Burn-in protection ----------
+
+  // The schedule stays on screen for hours. Every few minutes the whole picture drifts to the
+  // next spot on a small circle, so no pixel shows exactly the same thing all day. The move
+  // takes a minute (styles.css), far too slow to notice.
+  var SHIFT_SPOTS = [
+    [0, 0],
+    [1, -1],
+    [2, 0],
+    [1, 1],
+    [0, 2],
+    [-1, 1],
+    [-2, 0],
+    [-1, -1],
+    [0, -2],
+  ];
+  var shiftIndex = 0;
+
+  function startShift() {
+    var px = config.shiftPixels;
+    if (!px) return;
+    setInterval(function () {
+      shiftIndex = (shiftIndex + 1) % SHIFT_SPOTS.length;
+      var spot = SHIFT_SPOTS[shiftIndex];
+      document.documentElement.style.setProperty("--shift-x", (spot[0] * px) / 2 + "px");
+      document.documentElement.style.setProperty("--shift-y", (spot[1] * px) / 2 + "px");
+    }, config.shiftMinutes * 60 * 1000);
   }
 
   // ---------- Schedule frames ----------
@@ -425,6 +470,8 @@
       if (Date.now() - lastLoadAt >= config.refreshMinutes * 60 * 1000) loadSchedule();
     }
 
+    if (isNight) replaceOldShell();
+
     // Flag a schedule that has not loaded for a long while (site down, network gone).
     var lastGood = Math.max(scheduleShownAt, dayStartedAt);
     var limit = config.refreshMinutes > 0 ? Math.max(STALE_MIN_MS, 3 * config.refreshMinutes * 60 * 1000) : STALE_MIN_MS;
@@ -552,7 +599,7 @@
 
   // Start the invisible video as early as the browser allows; it is muted, so autoplay is permitted.
   keepAwake();
-  connect();
+  startShift();
 
   // Offline start (sw.js). The shell registers it too, but a TV keeps its shell for good while
   // the app inside gets updated, so the app makes sure.
@@ -561,12 +608,16 @@
   }
 
   if (config.resume) {
-    // A fresh copy swapped in by the shell: the old one was already running.
+    // A fresh copy swapped in by the shell: the old one was already running. Launch before
+    // connecting, so the server never hears "splash" from it.
     splash.setAttribute("hidden", "");
     splashDone = true;
     launch();
+    connect();
     return;
   }
+
+  connect();
 
   // Let the intro animation finish before offering the button to the remote's OK key.
   setTimeout(function () {

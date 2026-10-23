@@ -45,12 +45,15 @@ body.is-running * {
 
 /* ---------- Schedule ---------- */
 
+/* A few pixels larger than the screen on every side, so the burn-in drift (app.js) never
+   uncovers an edge; it moves over a whole minute, far too slowly to see. */
 #stage {
   position: fixed;
-  inset: 0;
+  inset: -4px;
   background: var(--night);
   opacity: 0;
-  transition: opacity 900ms ease;
+  transform: translate(var(--shift-x, 0px), var(--shift-y, 0px));
+  transition: opacity 900ms ease, transform 60s linear;
 }
 
 body.is-running #stage {

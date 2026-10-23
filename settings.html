@@ -38,9 +38,9 @@
     <header class="topbar">
       <div class="topbar-inner">
         <img class="topbar-logo" src="assets/logo.svg" alt="" width="30" height="36">
-        <h1>Телевізори з розкладом</h1>
+        <h1>Телевізор з розкладом</h1>
         <span class="spacer"></span>
-        <span id="online-pill" class="pill" title="Скільки телевізорів зараз на зв'язку">
+        <span id="online-pill" class="pill" title="Чи телевізор зараз на зв'язку">
           <span class="dot"></span><span id="online-count">—</span>
           <span id="live" class="live" hidden>наживо</span>
         </span>
@@ -49,7 +49,7 @@
     </header>
 
     <main class="page">
-      <!-- What is on the screens now, manual on/off, the TVs at a glance -->
+      <!-- What is on the screen now, manual on/off, the TV itself -->
       <div class="hero">
         <section id="now-card" class="card now-card" aria-labelledby="now-label">
           <p id="now-label" class="label">Зараз на екранах</p>
@@ -73,28 +73,79 @@
             <button class="chip" type="button" data-mode="on" data-for="4h">На 4 год</button>
             <button class="chip" type="button" data-mode="on" data-for="day">До кінця дня</button>
           </div>
-          <p class="hint">Діє одразу на всіх телевізорах і не змінює розклад.</p>
+          <p class="hint">Діє на телевізорі одразу і не змінює розклад.</p>
         </section>
 
-        <section class="glance" aria-label="Телевізори коротко">
-          <ul id="glance-list" class="glance-list"></ul>
-          <p id="glance-empty" class="glance-empty" hidden>Поки жоден телевізор не на зв'язку.</p>
-          <button id="glance-all" class="link-btn" type="button">Усі телевізори →</button>
+        <section class="card tv-card" aria-labelledby="tv-name">
+          <div class="tv-head">
+            <span id="tv-dot" class="screen-dot"></span>
+            <div class="tv-title">
+              <h2 id="tv-name">Телевізор</h2>
+              <p id="tv-state" class="tv-state"></p>
+            </div>
+            <button id="tv-rename" class="icon-btn" type="button" title="Перейменувати" aria-label="Перейменувати">✎</button>
+            <button id="tv-reload" class="btn btn-small" type="button">Перезавантажити</button>
+          </div>
+          <form id="tv-rename-form" class="rename" hidden>
+            <input id="tv-rename-input" type="text" maxlength="60" placeholder="Наприклад: Хол, 1 поверх" aria-label="Нова назва">
+            <button class="btn btn-small btn-primary" type="submit">Зберегти</button>
+            <button id="tv-rename-cancel" class="btn btn-small btn-ghost" type="button">Скасувати</button>
+          </form>
+
+          <!-- Roughly what the TV shows right now -->
+          <div id="preview" class="preview" aria-label="Що зараз на екрані">
+            <div class="preview-screen">
+              <iframe id="preview-frame" class="preview-frame" title="Розклад, як на телевізорі" tabindex="-1" hidden></iframe>
+              <div id="preview-night" class="preview-layer preview-night" hidden><span id="preview-clock"></span></div>
+              <div id="preview-splash" class="preview-layer preview-splash" hidden><img src="assets/logo.svg" alt=""></div>
+              <div id="preview-offline" class="preview-layer preview-offline" hidden><span>Немає зв'язку з телевізором</span></div>
+            </div>
+          </div>
+
+          <dl class="tv-facts">
+            <div><dt>Розклад оновлено</dt><dd id="tv-loaded">—</dd></div>
+            <div><dt>На зв'язку</dt><dd id="tv-uptime">—</dd></div>
+            <div><dt>Екран</dt><dd id="tv-size">—</dd></div>
+          </dl>
+          <p id="tv-empty" class="muted" hidden>Телевізор ще не виходив на зв'язок. Щойно на ньому відкриють розклад, він з'явиться тут.</p>
         </section>
       </div>
+
+      <!-- Connection over the last 24 hours -->
+      <section class="card uptime-card" aria-labelledby="uptime-title">
+        <div class="card-head">
+          <h2 id="uptime-title" class="label">Зв'язок за добу</h2>
+          <span id="uptime-summary" class="uptime-summary"></span>
+        </div>
+        <div class="timeline">
+          <div id="timeline-bar" class="timeline-bar"></div>
+          <div id="timeline-ticks" class="timeline-ticks" aria-hidden="true"></div>
+        </div>
+        <div class="legend">
+          <span><i class="sw sw-schedule"></i>розклад</span>
+          <span><i class="sw sw-night"></i>чорний екран</span>
+          <span><i class="sw sw-splash"></i>заставка</span>
+          <span><i class="sw sw-offline"></i>не на зв'язку</span>
+        </div>
+        <ol id="events" class="events"></ol>
+        <details id="others" class="others" hidden>
+          <summary id="others-title">Інші пристрої</summary>
+          <ul id="others-list" class="screens"></ul>
+          <p class="hint">Так буває, якщо браузер на ТВ скинули або розклад відкривали ще десь. Офлайн-пристрої можна прибрати.</p>
+        </details>
+      </section>
 
       <!-- Tabs -->
       <section class="card tabs-card">
         <nav class="tabs" role="tablist" aria-label="Розділи">
           <button class="tab" role="tab" id="tab-week" aria-controls="panel-week" data-tab="week" type="button">Тиждень</button>
           <button class="tab" role="tab" id="tab-dates" aria-controls="panel-dates" data-tab="dates" type="button">Особливі дні <span id="dates-count" class="tab-count" hidden></span></button>
-          <button class="tab" role="tab" id="tab-screens" aria-controls="panel-screens" data-tab="screens" type="button">Телевізори <span id="screens-count" class="tab-count" hidden></span></button>
           <button class="tab" role="tab" id="tab-history" aria-controls="panel-history" data-tab="history" type="button">Історія</button>
         </nav>
 
         <!-- Week -->
         <div class="panel" role="tabpanel" id="panel-week" aria-labelledby="tab-week">
-          <p class="panel-intro">Коли телевізори показують розклад у звичайний тиждень. Перетягуйте смужку або виберіть час праворуч.</p>
+          <p class="panel-intro">Коли телевізор показує розклад у звичайний тиждень. Перетягуйте смужку або виберіть час праворуч.</p>
           <div class="hours" aria-hidden="true">
             <span></span>
             <div class="hours-scale"><span style="left:0.000%">0</span><span style="left:12.500%">3</span><span style="left:25.000%">6</span><span style="left:37.500%">9</span><span style="left:50.000%">12</span><span style="left:62.500%">15</span><span style="left:75.000%">18</span><span style="left:87.500%">21</span><span style="left:100.000%">24</span></div>
@@ -163,16 +214,6 @@
                 </div>
               </form>
             </div>
-          </div>
-        </div>
-
-        <!-- Screens -->
-        <div class="panel" role="tabpanel" id="panel-screens" aria-labelledby="tab-screens" hidden>
-          <ul id="screens" class="screens"></ul>
-          <p id="screens-empty" class="muted" hidden>Поки жоден телевізор не на зв'язку. Щойно на ТВ відкриють розклад, він з'явиться тут.</p>
-          <div class="screens-foot">
-            <button id="reload-all" class="btn btn-small" type="button">Перезавантажити всі</button>
-            <p class="hint">Назву можна змінити тут або відкрити на ТВ адресу з <code>?name=</code>, наприклад <code id="name-example"></code></p>
           </div>
         </div>
 

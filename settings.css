@@ -638,6 +638,260 @@ body.has-savebar .page {
   border-top: 1px solid var(--line);
 }
 
+/* ---------- The TV ---------- */
+
+.tv-card {
+  display: grid;
+  gap: 14px;
+}
+
+.tv-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tv-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.tv-title h2 {
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.tv-state {
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
+.tv-state.is-warning {
+  color: var(--warn);
+}
+
+.screen-dot.is-online {
+  background: var(--ok);
+  box-shadow: 0 0 0 4px rgba(62, 207, 142, 0.18);
+}
+
+.screen-dot.is-warning {
+  background: var(--warn);
+  box-shadow: 0 0 0 4px rgba(255, 184, 77, 0.18);
+}
+
+/* A miniature TV: the schedule page at the TV's own size, scaled down. */
+.preview {
+  --ratio: 16 / 9;
+  padding: 8px;
+  border-radius: 14px;
+  background: #1a1d24;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.preview-screen {
+  position: relative;
+  aspect-ratio: var(--ratio);
+  overflow: hidden;
+  border-radius: 6px;
+  background: #000;
+}
+
+.preview-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 0;
+  background: #fff;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.preview-layer {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.preview-night {
+  background: #000;
+  color: rgba(255, 255, 255, 0.28);
+  font-size: clamp(16px, 4vw, 30px);
+  font-weight: 200;
+  font-variant-numeric: tabular-nums;
+}
+
+.preview-splash {
+  background: radial-gradient(120% 80% at 50% 115%, rgba(0, 63, 132, 0.75), rgba(0, 63, 132, 0) 60%), #00060f;
+}
+
+.preview-splash img {
+  height: 45%;
+  filter: brightness(0) invert(1);
+}
+
+.preview-offline {
+  background: repeating-linear-gradient(135deg, #0d1626 0 14px, #0a1220 14px 28px);
+  color: var(--ink-faint);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tv-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.tv-facts dt {
+  color: var(--ink-faint);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.tv-facts dd {
+  margin: 2px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Connection over 24 hours ---------- */
+
+.uptime-card {
+  display: grid;
+  gap: 12px;
+}
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.uptime-summary {
+  color: var(--ok);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.uptime-summary.is-warning {
+  color: var(--warn);
+}
+
+.timeline-bar {
+  position: relative;
+  height: 30px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.seg-schedule {
+  background: var(--ok);
+}
+
+.seg-night {
+  background: #1f5a48;
+}
+
+.seg-splash,
+.seg-unknown {
+  background: var(--accent);
+}
+
+.seg-offline {
+  min-width: 3px; /* a short drop must still be visible on a 24-hour strip */
+  background: var(--error);
+}
+
+.seg-none {
+  background: transparent;
+}
+
+.timeline-ticks {
+  position: relative;
+  height: 18px;
+  margin-top: 4px;
+  color: var(--ink-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tick {
+  position: absolute;
+  transform: translateX(-50%);
+}
+
+.sw-schedule {
+  background: var(--ok);
+}
+
+.sw-night {
+  background: #1f5a48;
+}
+
+.sw-splash {
+  background: var(--accent);
+}
+
+.sw-offline {
+  background: var(--error);
+}
+
+.events {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  font-size: 14px;
+}
+
+.event {
+  display: flex;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+
+.event:first-child {
+  border-top: 0;
+}
+
+.event-time {
+  flex: none;
+  min-width: 96px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.event-offline .event-text {
+  color: var(--error);
+}
+
+.others summary {
+  color: var(--ink-dim);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.others .screens {
+  margin: 10px 0;
+}
+
 /* ---------- Tabs ---------- */
 
 .tabs-card {
@@ -1479,6 +1733,14 @@ body.has-savebar .toast {
   }
 
   .screen {
+    flex-wrap: wrap;
+  }
+
+  .tv-facts {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .tv-head {
     flex-wrap: wrap;
   }
 
