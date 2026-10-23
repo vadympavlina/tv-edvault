@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#00060f">
+  <meta name="theme-color" content="#ffffff">
   <meta name="robots" content="noindex">
   <title>Налаштування · Розклад IT STEP</title>
   <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
@@ -37,8 +37,8 @@
   <div id="app-view" hidden>
     <header class="topbar">
       <div class="topbar-inner">
-        <img class="topbar-logo" src="assets/logo.svg" alt="" width="30" height="36">
-        <h1>Телевізор з розкладом</h1>
+        <img class="topbar-logo" src="assets/logo.svg" alt="" width="22" height="27">
+        <h1 class="brand">TV · Розклад</h1>
         <span class="spacer"></span>
         <span id="online-pill" class="pill" title="Чи телевізор зараз на зв'язку">
           <span class="dot"></span><span id="online-count">—</span>
@@ -47,6 +47,25 @@
         <button id="logout" class="btn btn-ghost btn-small" type="button">Вийти</button>
       </div>
     </header>
+
+    <!-- Narrow icon rail, as in Logbook: jumps to a section -->
+    <nav class="rail" aria-label="Розділи">
+      <button class="rail-btn" type="button" data-target="now-card" title="Зараз на екрані" aria-label="Зараз на екрані">
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+      </button>
+      <button class="rail-btn" type="button" data-tab="week" title="Тиждень" aria-label="Тиждень">
+        <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><circle cx="16" cy="16" r="2.5"/></svg>
+      </button>
+      <button class="rail-btn" type="button" data-tab="dates" title="Особливі дні" aria-label="Особливі дні">
+        <svg viewBox="0 0 24 24"><path d="m12 4 2.3 4.7 5.2.8-3.8 3.7.9 5.2L12 16l-4.6 2.4.9-5.2-3.8-3.7 5.2-.8z"/></svg>
+      </button>
+      <button class="rail-btn" type="button" data-target="uptime-card" title="Зв'язок за добу" aria-label="Зв'язок за добу">
+        <svg viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg>
+      </button>
+      <button class="rail-btn" type="button" data-tab="history" title="Історія змін" aria-label="Історія змін">
+        <svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.3-5.6"/><path d="M4 4v4h4M12 8v4l3 2"/></svg>
+      </button>
+    </nav>
 
     <main class="page">
       <!-- What is on the screen now, manual on/off, the TV itself -->
@@ -112,7 +131,7 @@
       </div>
 
       <!-- Connection over the last 24 hours -->
-      <section class="card uptime-card" aria-labelledby="uptime-title">
+      <section id="uptime-card" class="card uptime-card" aria-labelledby="uptime-title">
         <div class="card-head">
           <h2 id="uptime-title" class="label">Зв'язок за добу</h2>
           <span id="uptime-summary" class="uptime-summary"></span>
@@ -136,7 +155,7 @@
       </section>
 
       <!-- Tabs -->
-      <section class="card tabs-card">
+      <section id="tabs-card" class="card tabs-card">
         <nav class="tabs" role="tablist" aria-label="Розділи">
           <button class="tab" role="tab" id="tab-week" aria-controls="panel-week" data-tab="week" type="button">Тиждень</button>
           <button class="tab" role="tab" id="tab-dates" aria-controls="panel-dates" data-tab="dates" type="button">Особливі дні <span id="dates-count" class="tab-count" hidden></span></button>

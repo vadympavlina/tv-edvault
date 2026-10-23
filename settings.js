@@ -1076,6 +1076,9 @@
       tab.tabIndex = on ? 0 : -1;
       $("panel-" + tab.dataset.tab).hidden = !on;
     });
+    Array.prototype.forEach.call(document.querySelectorAll(".rail-btn[data-tab]"), function (button) {
+      button.classList.toggle("is-active", button.dataset.tab === name);
+    });
   }
 
   function buildTabs() {
@@ -1287,6 +1290,15 @@
   });
   $("save").addEventListener("click", save);
   $("discard").addEventListener("click", discard);
+  // Icon rail: open a tab or jump to a card.
+  Array.prototype.forEach.call(document.querySelectorAll(".rail-btn"), function (button) {
+    button.addEventListener("click", function () {
+      if (button.dataset.tab) showTab(button.dataset.tab);
+      var target = $(button.dataset.target || "tabs-card");
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
+
   $("tv-reload").addEventListener("click", reloadTv);
   $("tv-rename").addEventListener("click", startRename);
   $("tv-rename-form").addEventListener("submit", submitRename);
