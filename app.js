@@ -84,6 +84,7 @@
       resume: params.get("resume") === "1",
       shiftPixels: toNumber(pick("shift", base.shiftPixels), 4),
       shiftMinutes: Math.max(1, toNumber(base.shiftMinutes, 4)),
+      nightLogoMinutes: toNumber(pick("nightlogo", base.nightLogoMinutes), 15),
     };
   }
 
@@ -452,11 +453,13 @@
     if (!day && isNight !== true) {
       isNight = true;
       body.classList.add("is-night");
+      startNightLogo();
       clearSchedule();
       finishSplash();
       signalReady();
     } else if (day && isNight !== false) {
       isNight = false;
+      stopNightLogo();
       dayStartedAt = Date.now();
       // Stay black until the fresh schedule is ready, then reveal it.
       loadSchedule();
@@ -493,10 +496,69 @@
     nightClock.textContent = Schedule.formatClock(t.minutes);
     nightText.textContent = next ? "Розклад увімкнеться " + next : "";
     night.classList.add("show-hint");
+    nightShow.classList.remove("is-on");
+    nightShow.textContent = "";
     clearTimeout(nightHintTimer);
     nightHintTimer = setTimeout(function () {
       night.classList.remove("show-hint");
     }, NIGHT_HINT_MS);
+  }
+
+  // ---------- Logo on the black screen ----------
+
+  // While the screen is black, every `nightLogoMinutes` the splash logo plays its build-up
+  // animation once (about 11 s) and fades away. A fresh copy of the SVG each time restarts
+  // its CSS animations; its ids are renamed so they do not clash with the hidden splash.
+  var NIGHT_LOGO_MS = 11000;
+  var nightShow = document.getElementById("night-show");
+  var nightLogoTimer = null;
+  var nightLogoCount = 0;
+
+  function playNightLogo() {
+    if (!isNight || night.classList.contains("show-hint")) return;
+    var logo = splash.querySelector(".logo").cloneNode(true);
+    ["shine", "logo-clip"].forEach(function (id) {
+      var node = logo.querySelector("#" + id);
+      if (node) node.id = "night-" + id;
+    });
+    Array.prototype.forEach.call(logo.querySelectorAll("[fill^='url(#'], [clip-path^='url(#']"), function (node) {
+      ["fill", "clip-path"].forEach(function (attr) {
+        var value = node.getAttribute(attr);
+        if (value && value.indexOf("url(#") === 0) node.setAttribute(attr, value.replace("url(#", "url(#night-"));
+      });
+    });
+    // A different spot each time, within a small box around the centre.
+    var spots = [[0, 0], [-6, -4], [6, 3], [-4, 5], [5, -5]];
+    var spot = spots[nightLogoCount++ % spots.length];
+    nightShow.style.setProperty("--x", spot[0] + "vmin");
+    nightShow.style.setProperty("--y", spot[1] + "vmin");
+    nightShow.textContent = "";
+    nightShow.appendChild(logo);
+    nightShow.classList.remove("is-on");
+    void nightShow.offsetWidth; // restart the fade animation
+    nightShow.classList.add("is-on");
+    setTimeout(function () {
+      nightShow.classList.remove("is-on");
+      nightShow.textContent = "";
+    }, NIGHT_LOGO_MS + 200);
+  }
+
+  function startNightLogo() {
+    stopNightLogo();
+    if (!config.nightLogoMinutes) return;
+    // The first one shortly after the screen goes black, then on a steady beat.
+    nightLogoTimer = setTimeout(function () {
+      playNightLogo();
+      nightLogoTimer = setInterval(playNightLogo, config.nightLogoMinutes * 60 * 1000);
+    }, Math.min(2 * 60 * 1000, config.nightLogoMinutes * 60 * 1000));
+  }
+
+  function stopNightLogo() {
+    clearTimeout(nightLogoTimer);
+    clearInterval(nightLogoTimer);
+    nightLogoTimer = null;
+    nightShow.classList.remove("is-on");
+    nightShow.textContent = "";
   }
 
   // ---------- Splash ----------

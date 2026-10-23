@@ -27,6 +27,10 @@ window.TV_CONFIG = {
   shiftPixels: 4,
   shiftMinutes: 4,
 
+  // While the screen is black, the animated logo shows up on its own every N minutes for about
+  // 10 seconds. 0 disables.
+  nightLogoMinutes: 15,
+
   // After the button has been pressed once on a TV, later visits (power cut, browser restart)
   // start by themselves after this many seconds. 0 disables auto-start.
   autostartSeconds: 15,

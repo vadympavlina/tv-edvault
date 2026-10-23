@@ -104,6 +104,45 @@ body.is-night #night {
   white-space: nowrap;
 }
 
+/* The animated logo that now and then appears on the black screen. It shifts a little each
+   time (app.js sets --x/--y) so no spot of the screen gets it every night. */
+.night-show {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  height: min(42vh, 56vw);
+  aspect-ratio: 333 / 402;
+  transform: translate(calc(-50% + var(--x, 0px)), calc(-50% + var(--y, 0px)));
+  opacity: 0;
+  pointer-events: none;
+}
+
+.night-show.is-on {
+  animation: night-show 11s ease-in-out forwards;
+}
+
+.night-show .logo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  fill: #fff;
+  filter: drop-shadow(0 0 3vmin rgba(47, 127, 224, 0.45));
+}
+
+/* Fade in, let the logo build itself, hold, then drift up a touch as it fades out. */
+@keyframes night-show {
+  0% { opacity: 0; }
+  4% { opacity: 0.92; }
+  82% { opacity: 0.92; filter: none; }
+  100% { opacity: 0; filter: blur(6px); }
+}
+
+#night.show-hint .night-show {
+  opacity: 0 !important;
+  animation: none;
+}
+
 #night.show-hint #night-hint {
   opacity: 1;
 }
