@@ -31,6 +31,10 @@ window.TV_CONFIG = {
   // 10 seconds. 0 disables.
   nightLogoMinutes: 15,
 
+  // Air raid alerts: the place named on the alert screen. Which alerts count is decided by the
+  // settings server (worker/src/alerts.js).
+  alertPlace: "м. Рівне",
+
   // After the button has been pressed once on a TV, later visits (power cut, browser restart)
   // start by themselves after this many seconds. 0 disables auto-start.
   autostartSeconds: 15,

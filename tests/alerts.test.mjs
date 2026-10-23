@@ -1,0 +1,62 @@
+// Run: node tests/alerts.test.mjs  (also runs in CI before every deploy)
+import assert from "node:assert";
+import { summarize, sameState } from "../worker/src/alerts.js";
+
+const alert = (over) => ({
+  location_type: "oblast",
+  location_uid: "5",
+  location_oblast_uid: "5",
+  location_title: "Рівненська область",
+  alert_type: "air_raid",
+  alert_level: "red",
+  started_at: "2026-10-23T10:00:00.000Z",
+  finished_at: null,
+  ...over,
+});
+
+// Nothing at all.
+assert.deepStrictEqual(summarize([]), { level: "none" });
+
+// Oblast-wide red air raid covers Rivne.
+let s = summarize([alert()]);
+assert.strictEqual(s.level, "red");
+assert.strictEqual(s.kind, "air_raid");
+assert.strictEqual(s.since, Date.parse("2026-10-23T10:00:00.000Z"));
+
+// Yellow (early warning) for the oblast.
+assert.strictEqual(summarize([alert({ alert_level: "yellow" })]).level, "yellow");
+
+// Another oblast: ignored.
+assert.strictEqual(summarize([alert({ location_uid: "8", location_oblast_uid: "8", location_title: "Волинська область" })]).level, "none");
+
+// Another raion / hromada in our oblast: ignored.
+assert.strictEqual(summarize([alert({ location_type: "raion", location_uid: "70", location_title: "Сарненський район" })]).level, "none");
+assert.strictEqual(summarize([alert({ location_type: "hromada", location_uid: "900", location_title: "Здолбунівська міська громада" })]).level, "none");
+
+// Our raion, our city, our hromada: counted.
+assert.strictEqual(summarize([alert({ location_type: "raion", location_uid: "71", location_title: "Рівненський район" })]).level, "red");
+assert.strictEqual(summarize([alert({ location_type: "city", location_uid: "901", location_title: "м. Рівне" })]).level, "red");
+assert.strictEqual(summarize([alert({ location_type: "hromada", location_uid: "902", location_title: "Рівненська міська територіальна громада" })]).level, "red");
+
+assert.strictEqual(summarize([alert({ location_type: "city", location_uid: "903", location_title: "м. Рівне та Рівненська територіальна громада" })]).level, "red");
+assert.strictEqual(summarize([alert({ location_type: "hromada", location_uid: "904", location_title: "Рівненська громада" })]).level, "red");
+
+// Finished alerts do not count.
+assert.strictEqual(summarize([alert({ finished_at: "2026-10-23T11:00:00.000Z" })]).level, "none");
+
+// Red wins over yellow; other kinds are full screen and win over an air raid when more serious.
+s = summarize([alert({ alert_level: "yellow" }), alert({ alert_type: "chemical", alert_level: undefined, started_at: "2026-10-23T10:30:00.000Z" })]);
+assert.deepStrictEqual([s.level, s.kind], ["red", "chemical"]);
+s = summarize([alert({ alert_type: "artillery_shelling" }), alert({ started_at: "2026-10-23T09:00:00.000Z" })]);
+assert.deepStrictEqual([s.level, s.kind, s.since], ["red", "air_raid", Date.parse("2026-10-23T09:00:00.000Z")]);
+
+// Air raid without a level (older records) is red; unknown alert types are ignored.
+assert.strictEqual(summarize([alert({ alert_level: undefined })]).level, "red");
+assert.strictEqual(summarize([alert({ alert_type: "something_new" })]).level, "none");
+
+// Comparing states.
+assert.ok(sameState({ level: "none" }, { level: "none" }));
+assert.ok(!sameState({ level: "none" }, { level: "red", kind: "air_raid", since: 1 }));
+assert.ok(!sameState({ level: "red", kind: "air_raid", since: 1 }, { level: "red", kind: "air_raid", since: 2 }));
+
+console.log("alerts.js: all assertions passed");

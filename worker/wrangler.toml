@@ -11,6 +11,14 @@ TIME_ZONE = "Europe/Kyiv"
 # Origins allowed to call the admin routes with credentials.
 ALLOWED_ORIGINS = "https://tv.edvault.online,https://vadympavlina.github.io,http://localhost:8765,http://localhost:8000"
 
+# Air raid alerts (alerts.in.ua): checked every minute; ALERTS_TOKEN is a Worker secret set by
+# the deploy workflow. Our place: Рівненська область (uid 5) when the whole oblast is alerted, or
+# alerts for Рівненський район / Рівне itself (titles matched by worker/src/alerts.js).
+ALERT_OBLAST_UID = "5"
+
+[triggers]
+crons = ["* * * * *"]
+
 # All state lives in one Durable Object (free plan: SQLite-backed).
 [[durable_objects.bindings]]
 name = "HUB"

@@ -23,6 +23,35 @@
   </main>
 
   <!-- 20:00–08:00: pure black. -->
+  <!-- Air raid alerts (pushed by the settings server; not shown at night). -->
+  <section id="alert-full" class="alert-full" aria-live="assertive" hidden>
+    <div class="alert-inner">
+      <div class="alert-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-7 7v6H4v3h16v-3h-1v-6a7 7 0 0 0-7-7Zm-1 4h2v6h-2V7Zm0 7h2v2h-2v-2Z"/></svg>
+      </div>
+      <h1 id="alert-title" class="alert-title">ПОВІТРЯНА ТРИВОГА</h1>
+      <p id="alert-place" class="alert-place"></p>
+      <p id="alert-duration" class="alert-duration"></p>
+      <p class="alert-go">Пройдіть до укриття</p>
+    </div>
+  </section>
+  <section id="alert-band" class="alert-band" aria-live="polite" hidden>
+    <div class="alert-band-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M12 2 1 21h22L12 2Zm-1 7h2v6h-2V9Zm0 8h2v2h-2v-2Z"/></svg>
+    </div>
+    <div class="alert-band-text">
+      <b>ПОПЕРЕДНЯ ЗАГРОЗА<span id="alert-band-place"></span></b>
+      <span>Будьте готові пройти до укриття</span>
+    </div>
+    <div id="alert-band-since" class="alert-band-since"></div>
+  </section>
+  <div id="alert-clear" class="alert-clear" role="status" hidden>
+    <span class="alert-clear-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2Z"/></svg>
+    </span>
+    <span><b>Відбій тривоги</b><span id="alert-clear-text"></span></span>
+  </div>
+
   <div id="night" aria-hidden="true">
     <!-- Now and then, while black: the animated logo on its own (filled in by app.js). -->
     <div id="night-show" class="night-show"></div>

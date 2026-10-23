@@ -46,6 +46,7 @@
     screens: [],
     history: [],
     clockOffset: 0,
+    alerts: null,
     saving: false,
     loaded: false,
     tab: "week",
@@ -938,6 +939,96 @@
       });
   }
 
+  // ---------- Air raid alerts ----------
+
+  var ALERT_KINDS = {
+    air_raid: "Повітряна тривога",
+    artillery_shelling: "Загроза артобстрілу",
+    urban_fights: "Вуличні бої",
+    chemical: "Хімічна загроза",
+    nuclear: "Радіаційна загроза",
+  };
+
+  function alertText(a) {
+    if (!a || a.level === "none") return "Відбій · тривоги немає";
+    if (a.level === "yellow") return "Попередня загроза";
+    return (ALERT_KINDS[a.kind] || ALERT_KINDS.air_raid) + (a.source === "manual" ? " (тест)" : "");
+  }
+
+  function renderAlerts() {
+    var alerts = state.alerts;
+    var card = $("alert-card");
+    if (!alerts) return (card.hidden = true);
+    card.hidden = false;
+    var now = serverNow();
+    var api = alerts.api || {};
+    var effective = alerts.effective || { level: "none" };
+    var level = effective.level;
+    var noData = !alerts.configured || (api.error && !api.paused);
+
+    card.className = "card alert-card" + (level === "red" ? " is-red" : level === "yellow" ? " is-yellow" : noData || api.paused ? " is-unknown" : "");
+    $("alert-pill").className = "pill" + (level === "red" ? " is-error" : level === "yellow" ? " is-warning" : noData ? "" : " is-ok");
+    $("alert-pill-text").textContent =
+      level !== "none" ? alertText(effective) + (effective.since ? " · " + duration(now - effective.since) : "") : !alerts.configured ? "Не налаштовано" : api.paused ? "Не перевіряємо" : noData ? "Немає даних" : "Тривоги немає";
+
+    var source = $("alert-source");
+    source.classList.toggle("is-error", !!noData);
+    if (!alerts.configured) {
+      source.textContent = "Ключ alerts.in.ua не додано на сервер (секрет ALERTS_TOKEN).";
+    } else if (api.paused) {
+      source.textContent = "Зараз чорний екран, тож тривоги не перевіряємо. Почнемо за 15 хв до увімкнення розкладу.";
+    } else if (api.error) {
+      source.textContent =
+        "Немає свіжих даних від alerts.in.ua з " + stampText(api.errorSince) + " (" + alertErrorText(api.error) + "). На екрані лишається останній відомий стан.";
+    } else {
+      source.textContent = "Дані alerts.in.ua" + (api.checkedAt ? " · перевірено " + ago(now - api.checkedAt) : " · ще не перевіряли");
+    }
+
+    var manual = alerts.manual;
+    $("alert-test").hidden = !!manual;
+    $("alert-test-stop").hidden = !manual;
+    if (manual) $("alert-test-stop").textContent = "Зняти тестову тривогу (ще " + Math.max(1, Math.ceil((manual.until - now) / 60000)) + " хв)";
+
+    var list = $("alert-log");
+    list.textContent = "";
+    (alerts.log || [])
+      .filter(function (e) {
+        return now - e.at < DAY_MS;
+      })
+      .slice(-6)
+      .reverse()
+      .forEach(function (e) {
+        var li = el("li", "event event-" + e.level);
+        li.appendChild(el("span", "event-time", stampText(e.at)));
+        li.appendChild(el("span", "event-text", alertText(e)));
+        list.appendChild(li);
+      });
+  }
+
+  function alertErrorText(code) {
+    if (code === "401") return "ключ не підходить";
+    if (code === "403") return "доступ заборонено";
+    if (code === "429") return "забагато запитів";
+    if (code === "network") return "немає з'єднання";
+    return "помилка " + code;
+  }
+
+  function setTestAlert(on, button) {
+    button.disabled = true;
+    api("PUT", "/alert", { mode: on ? "red" : null })
+      .then(function (data) {
+        state.alerts = data.alerts || state.alerts;
+        renderAlerts();
+        toast(on ? "Тестова тривога на телевізорі на 10 хв." : "Тестову тривогу знято.", "ok");
+      })
+      .catch(function (error) {
+        handleError(error, "Не вдалося.");
+      })
+      .then(function () {
+        button.disabled = false;
+      });
+  }
+
   // Other devices that once opened the schedule (a reset TV browser gets a new id).
   function renderOthers(primary, now) {
     var others = state.screens.filter(function (s) {
@@ -1120,8 +1211,10 @@
     state.override = Schedule.normalizeOverride(data.override);
     state.screens = data.screens || [];
     state.history = data.history || [];
+    state.alerts = data.alerts || null;
     renderTv();
     renderHistory();
+    renderAlerts();
     // Nothing saved on the server yet: start from the hours the TVs use today.
     return (data.settings ? Promise.resolve(Schedule.normalize(data.settings)) : loadStaticSettings()).then(receiveSettings);
   }
@@ -1205,6 +1298,9 @@
         if (data.serverTime) state.clockOffset = data.serverTime - Date.now();
         state.screens = data.screens || [];
         renderTv();
+      } else if (data.type === "alerts") {
+        state.alerts = data.alerts || null;
+        renderAlerts();
       } else if (data.type === "override") {
         state.override = Schedule.normalizeOverride(data.override);
         renderNow();
@@ -1305,6 +1401,12 @@
   $("tv-rename-cancel").addEventListener("click", function () {
     $("tv-rename-form").hidden = true;
   });
+  $("alert-test").addEventListener("click", function () {
+    setTestAlert(true, this);
+  });
+  $("alert-test-stop").addEventListener("click", function () {
+    setTestAlert(false, this);
+  });
   $("override-cancel").addEventListener("click", function () {
     setOverride(null, null, this);
   });
@@ -1356,6 +1458,7 @@
     renderNow();
     renderWeek();
     renderTv();
+    renderAlerts();
   }, CLOCK_MS);
 
 

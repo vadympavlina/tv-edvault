@@ -85,6 +85,7 @@
       shiftPixels: toNumber(pick("shift", base.shiftPixels), 4),
       shiftMinutes: Math.max(1, toNumber(base.shiftMinutes, 4)),
       nightLogoMinutes: toNumber(pick("nightlogo", base.nightLogoMinutes), 15),
+      alertPlace: base.alertPlace || "",
     };
   }
 
@@ -227,6 +228,7 @@
           setServerTime(data.serverTime);
           checkReload(data.reloadAt);
           applyOverride(data.override);
+          applyAlert(data.alert);
           if (data.settings) applySettings(data.settings);
           else loadStaticSettings(); // server has nothing saved yet
         },
@@ -240,6 +242,10 @@
         },
         // This one TV was asked to restart from the settings page.
         restart: restart,
+        alert: function (data) {
+          setServerTime(data.serverTime);
+          applyAlert(data.alert);
+        },
         time: function (data) {
           setServerTime(data.serverTime);
         },
@@ -480,6 +486,7 @@
     var limit = config.refreshMinutes > 0 ? Math.max(STALE_MIN_MS, 3 * config.refreshMinutes * 60 * 1000) : STALE_MIN_MS;
     stale = !isNight && (config.refreshMinutes > 0 || !activeFrame) && Date.now() - lastGood > limit;
     reportStatus();
+    renderAlert();
   }
 
   function whenShown(callback) {
@@ -502,6 +509,74 @@
     nightHintTimer = setTimeout(function () {
       night.classList.remove("show-hint");
     }, NIGHT_HINT_MS);
+  }
+
+  // ---------- Air raid alerts ----------
+
+  // The settings server checks alerts.in.ua and pushes the state for our place:
+  //   red (or any other danger) -> the whole screen; yellow -> a band at the bottom;
+  //   after an alert ends -> "all clear" for a few minutes.
+  // Not shown at night (black screen) and not remembered across restarts: a stale alert must
+  // never come back from a cache, the server sends the current one on every connect.
+  var ALERT_TITLES = {
+    air_raid: "ПОВІТРЯНА ТРИВОГА",
+    artillery_shelling: "ЗАГРОЗА АРТОБСТРІЛУ",
+    urban_fights: "ВУЛИЧНІ БОЇ",
+    chemical: "ХІМІЧНА ЗАГРОЗА",
+    nuclear: "РАДІАЦІЙНА ЗАГРОЗА",
+  };
+  var ALL_CLEAR_MS = 3 * 60 * 1000;
+  var alertState = { level: "none" };
+  var allClearUntil = 0;
+  var allClearText = "";
+
+  function applyAlert(raw) {
+    var next = raw && (raw.level === "red" || raw.level === "yellow") ? raw : { level: "none" };
+    var was = alertState;
+    alertState = next;
+    // An alert just ended while we were watching: say so for a few minutes.
+    if (was.level !== "none" && next.level === "none") {
+      allClearUntil = Date.now() + ALL_CLEAR_MS;
+      allClearText = was.since ? "Тривала " + minutesText(Date.now() + clockOffset - was.since) : "";
+    } else if (next.level !== "none") {
+      allClearUntil = 0;
+    }
+    renderAlert();
+  }
+
+  function minutesText(ms) {
+    var min = Math.max(1, Math.round(ms / 60000));
+    if (min < 60) return min + " хв";
+    return Math.floor(min / 60) + " год " + (min % 60) + " хв";
+  }
+
+  function renderAlert() {
+    var visible = running && !isNight;
+    var level = visible ? alertState.level : "none";
+    var full = document.getElementById("alert-full");
+    var band = document.getElementById("alert-band");
+    var place = config.alertPlace;
+
+    full.hidden = level !== "red";
+    band.hidden = level !== "yellow";
+    body.classList.toggle("has-alert-band", level === "yellow");
+    document.getElementById("alert-clear").hidden = !(visible && level === "none" && Date.now() < allClearUntil);
+
+    if (level === "red") {
+      document.getElementById("alert-title").textContent = ALERT_TITLES[alertState.kind] || ALERT_TITLES.air_raid;
+      document.getElementById("alert-place").textContent = place;
+      document.getElementById("alert-duration").textContent = alertState.since
+        ? "Триває " + minutesText(Date.now() + clockOffset - alertState.since) + " · з " + clockText(alertState.since)
+        : "";
+    } else if (level === "yellow") {
+      document.getElementById("alert-band-place").textContent = place ? " · " + place : "";
+      document.getElementById("alert-band-since").textContent = alertState.since ? "з " + clockText(alertState.since) : "";
+    }
+    document.getElementById("alert-clear-text").textContent = allClearText;
+  }
+
+  function clockText(ms) {
+    return Schedule.formatClock(Schedule.at(ms, config.timeZone).minutes);
   }
 
   // ---------- Logo on the black screen ----------

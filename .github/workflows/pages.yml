@@ -23,6 +23,7 @@ jobs:
         with:
           node-version: 22
       - run: node tests/schedule.test.js
+      - run: node tests/alerts.test.mjs
 
   # Settings server (worker/). Deployed only when the Cloudflare secrets and the admin password
   # are set; without them TVs keep reading settings.json.
@@ -35,6 +36,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       TV_ADMIN_PASSWORD: ${{ secrets.TV_ADMIN_PASSWORD }}
+      ALERTS_TOKEN: ${{ secrets.ALERTS_TOKEN }}
     steps:
       - name: Check secrets
         id: check
@@ -58,6 +60,8 @@ jobs:
           npx -y wrangler@4 deploy | tee deploy.log
           echo "url=$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' deploy.log | head -1)" >> "$GITHUB_OUTPUT"
           printf '%s' "$TV_ADMIN_PASSWORD" | npx -y wrangler@4 secret put ADMIN_PASSWORD
+          # alerts.in.ua token (optional): without it the TV shows only manual alerts.
+          if [ -n "$ALERTS_TOKEN" ]; then printf '%s' "$ALERTS_TOKEN" | npx -y wrangler@4 secret put ALERTS_TOKEN; fi
       - name: Worker URL
         id: url
         if: steps.check.outputs.ready == 'true'

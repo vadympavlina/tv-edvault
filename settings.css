@@ -1770,3 +1770,67 @@ body.has-savebar .toast {
     animation: none;
   }
 }
+
+/* ---------- Air raid alerts ---------- */
+
+.alert-card {
+  display: grid;
+  gap: 10px;
+  border-left: 4px solid var(--ok);
+}
+
+.alert-card.is-red {
+  border-left-color: var(--error);
+}
+
+.alert-card.is-yellow {
+  border-left-color: var(--warn);
+}
+
+.alert-card.is-unknown {
+  border-left-color: var(--ink-faint);
+}
+
+.pill.is-error {
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+.pill.is-error .dot {
+  background: var(--error);
+}
+
+.alert-source {
+  color: var(--ink-dim);
+}
+
+.alert-source.is-error {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.alert-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.btn-danger {
+  border-color: var(--error);
+  background: var(--error);
+  color: #fff;
+}
+
+.btn-danger:hover {
+  background: #c22d3c;
+}
+
+.event-red .event-text {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.event-yellow .event-text {
+  color: var(--warn);
+  font-weight: 600;
+}

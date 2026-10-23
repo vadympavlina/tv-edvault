@@ -130,6 +130,21 @@
         </section>
       </div>
 
+      <!-- Air raid alerts (alerts.in.ua) -->
+      <section id="alert-card" class="card alert-card" hidden aria-labelledby="alert-card-title">
+        <div class="card-head">
+          <h2 id="alert-card-title" class="label">Повітряна тривога · Рівне</h2>
+          <span id="alert-pill" class="pill"><span class="dot"></span><span id="alert-pill-text">—</span></span>
+        </div>
+        <p id="alert-source" class="alert-source"></p>
+        <div class="alert-actions">
+          <button id="alert-test" class="btn btn-small" type="button">Показати тестову тривогу на 10 хв</button>
+          <button id="alert-test-stop" class="btn btn-small btn-danger" type="button" hidden>Зняти тестову тривогу</button>
+        </div>
+        <ol id="alert-log" class="events"></ol>
+        <p class="hint">Червона тривога та інші загрози — на весь екран, попередня (жовта) — смуга внизу. Уночі, коли екран чорний, не показується.</p>
+      </section>
+
       <!-- Connection over the last 24 hours -->
       <section id="uptime-card" class="card uptime-card" aria-labelledby="uptime-title">
         <div class="card-head">

@@ -487,3 +487,208 @@ body.is-night #night {
     animation: none !important;
   }
 }
+
+/* ---------- Air raid alerts ---------- */
+
+/* Red level and every other danger: the whole screen. Above the schedule, below the splash. */
+.alert-full[hidden],
+.alert-band[hidden],
+.alert-clear[hidden] {
+  display: none;
+}
+
+.alert-full {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: #fff;
+  text-align: center;
+  background: radial-gradient(80% 70% at 50% 40%, #c4141c 0%, #8a0a10 55%, #4a0307 100%);
+}
+
+.alert-full::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(135deg, rgba(0, 0, 0, 0.08) 0 4vmin, transparent 4vmin 8vmin);
+}
+
+/* Static text for hours: let it drift with the burn-in protection. */
+.alert-inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4vmin;
+  transform: translate(var(--shift-x, 0px), var(--shift-y, 0px));
+  transition: transform 60s linear;
+}
+
+.alert-icon {
+  display: grid;
+  place-items: center;
+  width: 16vmin;
+  height: 16vmin;
+  margin-bottom: 4vmin;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 0 0 2.2vmin rgba(255, 255, 255, 0.06), 0 0 0 4.4vmin rgba(255, 255, 255, 0.03);
+  animation: alert-pulse 2.4s ease-in-out infinite;
+}
+
+.alert-icon svg {
+  width: 9vmin;
+  height: 9vmin;
+  fill: #fff;
+}
+
+@keyframes alert-pulse {
+  50% {
+    box-shadow: 0 0 0 3.2vmin rgba(255, 255, 255, 0.1), 0 0 0 6.4vmin rgba(255, 255, 255, 0.04);
+  }
+}
+
+.alert-title {
+  margin: 0;
+  font-size: clamp(40px, 7.8vw, 170px);
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+.alert-place {
+  margin: 2.6vmin 0 0;
+  font-size: clamp(20px, 2.6vw, 56px);
+  font-weight: 600;
+  opacity: 0.92;
+}
+
+.alert-duration {
+  margin: 1.2vmin 0 0;
+  font-size: clamp(18px, 2.1vw, 44px);
+  opacity: 0.85;
+  font-variant-numeric: tabular-nums;
+}
+
+.alert-go {
+  margin: 5vmin 0 0;
+  padding: 2.4vmin 5vmin;
+  border-radius: 2.2vmin;
+  background: #fff;
+  color: #8a0a10;
+  font-size: clamp(24px, 2.9vw, 64px);
+  font-weight: 800;
+}
+
+/* Yellow level (early warning): a band at the bottom, the schedule stays above it. */
+body.has-alert-band #stage {
+  bottom: var(--band-height);
+}
+
+:root {
+  --band-height: 12vh;
+}
+
+.alert-band {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  height: var(--band-height);
+  display: flex;
+  align-items: center;
+  gap: 2.4vw;
+  padding: 0 3vw;
+  background: linear-gradient(90deg, #d97706, #f59e0b);
+  color: #1f1300;
+  box-shadow: 0 -1vh 4vh rgba(0, 0, 0, 0.3);
+}
+
+.alert-band-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 7vh;
+  height: 7vh;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.alert-band-icon svg {
+  width: 4vh;
+  height: 4vh;
+  fill: #1f1300;
+}
+
+.alert-band-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.alert-band-text b {
+  font-size: clamp(18px, 3.6vh, 52px);
+  font-weight: 900;
+  letter-spacing: 0.01em;
+}
+
+.alert-band-text span {
+  font-size: clamp(14px, 2.4vh, 34px);
+  font-weight: 600;
+}
+
+.alert-band-since {
+  margin-left: auto;
+  font-size: clamp(14px, 2.6vh, 36px);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* "All clear" for a few minutes after an alert ends. */
+.alert-clear {
+  position: fixed;
+  left: 50%;
+  bottom: 5vh;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 2vmin;
+  padding: 2.4vmin 4vmin;
+  border-radius: 2.4vmin;
+  background: #0f7a43;
+  color: #fff;
+  box-shadow: 0 2vh 6vh rgba(0, 0, 0, 0.35);
+  transform: translateX(-50%);
+  font-size: clamp(16px, 2.6vh, 36px);
+}
+
+.alert-clear b {
+  display: block;
+  font-size: clamp(22px, 4.2vh, 60px);
+  font-weight: 900;
+}
+
+.alert-clear-icon {
+  display: grid;
+  place-items: center;
+  width: 7vh;
+  height: 7vh;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.alert-clear-icon svg {
+  width: 4vh;
+  height: 4vh;
+  fill: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .alert-icon {
+    animation: none;
+  }
+}

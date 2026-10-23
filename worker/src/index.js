@@ -13,6 +13,8 @@
 //   PUT  /settings          { days, exceptions } -> saves, appends history, pushes to TVs (token)
 //   PUT  /override          { mode: "on"|"off", until } or { mode: null } -> "now" button  (token)
 //   POST /reload            asks every TV to reload the page                              (token)
+//   PUT  /alert             { mode: "red" | null } -> manual alert on/off                 (token)
+//   (cron, every minute)    polls alerts.in.ua while the schedule is on screen
 //   POST /screens/forget    { id } -> removes an offline TV from the list                 (token)
 //   POST /screens/rename    { id, label } -> name shown on the settings page              (token)
 //   POST /screens/reload    { id } -> restarts the app on that one TV                     (token)
@@ -20,6 +22,7 @@
 // ADMIN_PASSWORD is a Worker secret. Sessions are HMAC-signed with a key derived from it,
 // so changing the password signs everybody out.
 import "../../schedule.js";
+import { fetchState, sameState } from "./alerts.js";
 
 const Schedule = globalThis.TVSchedule;
 
@@ -45,6 +48,12 @@ const EVENTS_MAX = 500;
 const KEEP_PAST_EXCEPTIONS_DAYS = 60;
 // A manual override may not reach further than this.
 const OVERRIDE_MAX_MS = 14 * 24 * 60 * 60 * 1000;
+// Alerts: poll only while the schedule is on screen or about to be; the TV shows no alerts at
+// night. The last result is written at least this often so the settings page can tell it is fresh.
+const ALERT_POLL_AHEAD_MS = 15 * 60 * 1000;
+const ALERT_META_WRITE_MS = 5 * 60 * 1000;
+const ALERT_TEST_MS = 10 * 60 * 1000; // a test alert from the settings page ends by itself
+const ALERT_LOG_KEEP_MS = 48 * 60 * 60 * 1000;
 
 export default {
   async fetch(request, env) {
@@ -52,6 +61,8 @@ export default {
     const cors = corsHeaders(origin, env);
 
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+    // Internal routes are for the cron below only.
+    if (new URL(request.url).pathname.startsWith("/internal/")) return new Response("Not found", { status: 404 });
 
     const hub = env.HUB.get(env.HUB.idFromName("main"));
     const response = await hub.fetch(request);
@@ -60,6 +71,12 @@ export default {
     const headers = new Headers(response.headers);
     for (const [key, value] of Object.entries(cors)) headers.set(key, value);
     return new Response(response.body, { status: response.status, headers });
+  },
+
+  // Every minute (wrangler.toml [triggers]): let the hub check alerts.in.ua.
+  async scheduled(event, env, ctx) {
+    const hub = env.HUB.get(env.HUB.idFromName("main"));
+    ctx.waitUntil(hub.fetch("https://hub/internal/alerts/poll", { method: "POST" }));
   },
 };
 
@@ -114,6 +131,11 @@ export class Hub {
         case "POST /reload":
           await this.authorize(bearer(request));
           return json(await this.requestReload());
+        case "PUT /alert":
+          await this.authorize(bearer(request));
+          return json(await this.saveManualAlert(request));
+        case "POST /internal/alerts/poll":
+          return json(await this.pollAlerts());
         case "POST /screens/rename":
           await this.authorize(bearer(request));
           return json(await this.renameScreen(request));
@@ -291,7 +313,13 @@ export class Hub {
       this.override(),
       this.ctx.storage.get("reloadAt"),
     ]);
-    return { settings: settings || null, override, reloadAt: reloadAt || 0, serverTime: Date.now() };
+    return {
+      settings: settings || null,
+      override,
+      alert: await this.effectiveAlert(),
+      reloadAt: reloadAt || 0,
+      serverTime: Date.now(),
+    };
   }
 
   async override() {
@@ -425,6 +453,7 @@ export class Hub {
       history: history || [],
       reloadAt: reloadAt || 0,
       screens,
+      alerts: await this.adminAlerts(),
       serverTime: Date.now(),
     };
   }
@@ -443,6 +472,118 @@ export class Hub {
     const delivered = this.broadcastTvs({ type: "settings", settings, override, serverTime: Date.now() });
     for (const ws of openSockets(this.ctx, "admin")) send(ws, { type: "settings", settings, history: trimmed });
     return { settings, history: trimmed, delivered };
+  }
+
+  // ---------- Air raid alerts ----------
+
+  // What the TV should show: a manual alert from the settings page wins over alerts.in.ua.
+  async effectiveAlert() {
+    const [manual, api] = await Promise.all([this.ctx.storage.get("alertManual"), this.ctx.storage.get("alertApi")]);
+    if (manual && manual.level === "red" && manual.until > Date.now()) return { ...manual, source: "manual" };
+    const state = api && api.state;
+    if (!state || state.level === "none") return { level: "none" };
+    return { level: state.level, kind: state.kind, since: state.since, source: "api" };
+  }
+
+  async adminAlerts() {
+    const [api, manual, log] = await Promise.all([
+      this.ctx.storage.get("alertApi"),
+      this.ctx.storage.get("alertManual"),
+      this.ctx.storage.get("alertLog"),
+    ]);
+    return {
+      configured: !!this.env.ALERTS_TOKEN,
+      effective: await this.effectiveAlert(),
+      api: api || null,
+      manual: manual && manual.until > Date.now() ? manual : null,
+      log: log || [],
+    };
+  }
+
+  // Is the schedule on screen now, or about to be? Outside that the TV shows no alerts.
+  async screenOnSoon() {
+    const [saved, override] = await Promise.all([this.ctx.storage.get("settings"), this.override()]);
+    const settings = Schedule.normalize(saved || {});
+    settings.override = override;
+    const tz = this.env.TIME_ZONE;
+    const now = Schedule.now(tz);
+    if (Schedule.isOn(settings, now)) return true;
+    const next = Schedule.nextChange(settings, now, tz);
+    return next !== null && next - now.ms <= ALERT_POLL_AHEAD_MS;
+  }
+
+  async pollAlerts() {
+    // A test alert ran out: take it off the TV.
+    const manual = await this.ctx.storage.get("alertManual");
+    if (manual && !(manual.until > Date.now())) {
+      await this.ctx.storage.delete("alertManual");
+      await this.alertChanged({ level: manual.level, kind: manual.kind, since: manual.since });
+    }
+    if (!this.env.ALERTS_TOKEN) return { skipped: "no_token" };
+    const before = await this.effectiveAlert();
+    const meta = (await this.ctx.storage.get("alertApi")) || {};
+    const now = Date.now();
+    let next;
+
+    if (!(await this.screenOnSoon())) {
+      // Night: no polling. Forget the last state so a stale alert never shows in the morning.
+      if (meta.paused) return { skipped: "night" };
+      next = { paused: true, state: { level: "none" }, checkedAt: meta.checkedAt || null };
+    } else {
+      try {
+        const result = await fetchState(this.env, meta.paused ? null : meta);
+        next = { state: result.state, lastModified: result.lastModified, checkedAt: now, error: null, errorSince: null };
+      } catch (error) {
+        // Keep the last known state; the settings page says data is missing.
+        next = {
+          ...meta,
+          paused: false,
+          error: String(error.status || "network"),
+          errorSince: meta.errorSince || now,
+        };
+      }
+    }
+
+    const changed =
+      !sameState(meta.state, next.state) ||
+      (meta.error || null) !== (next.error || null) ||
+      !!meta.paused !== !!next.paused ||
+      now - (meta.writtenAt || 0) >= ALERT_META_WRITE_MS;
+    if (changed) {
+      next.writtenAt = now;
+      await this.ctx.storage.put("alertApi", next);
+      await this.alertChanged(before);
+    }
+    return { state: next.state, error: next.error || null };
+  }
+
+  async saveManualAlert(request) {
+    const body = await readJson(request);
+    const before = await this.effectiveAlert();
+    if (body.mode === "red") {
+      const now = Date.now();
+      await this.ctx.storage.put("alertManual", { level: "red", kind: "air_raid", since: now, until: now + ALERT_TEST_MS });
+    } else {
+      await this.ctx.storage.delete("alertManual");
+    }
+    await this.alertChanged(before, true);
+    return { alerts: await this.adminAlerts() };
+  }
+
+  // Push a changed alert to the TVs, log it, and refresh open settings pages.
+  async alertChanged(before, force) {
+    const after = await this.effectiveAlert();
+    const different = before.level !== after.level || before.kind !== after.kind || before.since !== after.since;
+    if (different) {
+      this.broadcastTvs({ type: "alert", alert: after, serverTime: Date.now() });
+      const log = ((await this.ctx.storage.get("alertLog")) || []).filter((e) => Date.now() - e.at < ALERT_LOG_KEEP_MS);
+      log.push({ at: Date.now(), level: after.level, kind: after.kind || null, source: after.source || null });
+      await this.ctx.storage.put("alertLog", log.slice(-300));
+    }
+    if (different || force || openSockets(this.ctx, "admin").length) {
+      const alerts = await this.adminAlerts();
+      for (const ws of openSockets(this.ctx, "admin")) send(ws, { type: "alerts", alerts });
+    }
   }
 
   async saveOverride(request) {
