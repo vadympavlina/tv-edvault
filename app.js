@@ -526,16 +526,21 @@
     nuclear: "РАДІАЦІЙНА ЗАГРОЗА",
   };
   var ALL_CLEAR_MS = 3 * 60 * 1000;
+  // Without word from the server for this long, the alert we hold may be long over: hide it.
+  // The server sends the current one again as soon as the TV is back online.
+  var ALERT_TRUST_MS = 10 * 60 * 1000;
   var alertState = { level: "none" };
   var allClearUntil = 0;
   var allClearText = "";
+  var alertShownAt = 0; // last time an alert was actually on screen
 
   function applyAlert(raw) {
     var next = raw && (raw.level === "red" || raw.level === "yellow") ? raw : { level: "none" };
     var was = alertState;
     alertState = next;
-    // An alert just ended while we were watching: say so for a few minutes.
-    if (was.level !== "none" && next.level === "none") {
+    // An alert we were showing just ended: say so for a few minutes. Not when the server
+    // only lost its data source (stale), and not for one that ended while we were offline.
+    if (was.level !== "none" && next.level === "none" && !(raw && raw.stale) && Date.now() - alertShownAt < 2 * 60 * 1000) {
       allClearUntil = Date.now() + ALL_CLEAR_MS;
       allClearText = was.since ? "Тривала " + minutesText(Date.now() + clockOffset - was.since) : "";
     } else if (next.level !== "none") {
@@ -552,7 +557,9 @@
 
   function renderAlert() {
     var visible = running && !isNight;
-    var level = visible ? alertState.level : "none";
+    var trusted = !!link && Date.now() - link.heardAt() < ALERT_TRUST_MS;
+    var level = visible && trusted ? alertState.level : "none";
+    if (level !== "none") alertShownAt = Date.now();
     var full = document.getElementById("alert-full");
     var band = document.getElementById("alert-band");
     var place = config.alertPlace;
@@ -560,7 +567,7 @@
     full.hidden = level !== "red";
     band.hidden = level !== "yellow";
     body.classList.toggle("has-alert-band", level === "yellow");
-    document.getElementById("alert-clear").hidden = !(visible && level === "none" && Date.now() < allClearUntil);
+    document.getElementById("alert-clear").hidden = !(visible && trusted && level === "none" && Date.now() < allClearUntil);
 
     if (level === "red") {
       document.getElementById("alert-title").textContent = ALERT_TITLES[alertState.kind] || ALERT_TITLES.air_raid;

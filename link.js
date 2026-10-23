@@ -28,6 +28,7 @@
     var timers = {};
     var downSince = Date.now();
     var lastFallbackAt = 0;
+    var heardAt = 0;
     var status = options.status(); // last state the server knows about
     var announced = status; // state sent in the URL of the current connection
 
@@ -71,6 +72,7 @@
 
       socket.onopen = function () {
         clear("connect");
+        heardAt = Date.now();
         attempt = 0;
         downSince = 0;
         // The state rode along in the URL; report it again if it changed while connecting
@@ -88,6 +90,7 @@
       };
 
       socket.onmessage = function (event) {
+        heardAt = Date.now();
         if (event.data === "pong") return clear("pong");
         var data;
         try {
@@ -166,6 +169,7 @@
           return res.json();
         })
         .then(function (data) {
+          heardAt = Date.now();
           options.on.hello(data);
         })
         .catch(function () {
@@ -189,6 +193,10 @@
     else fallback();
 
     return {
+      // When the server was last heard from (socket opened, any message or pong, HTTP check-in).
+      heardAt: function () {
+        return heardAt;
+      },
       // Tell the server about a change in what the TV shows.
       status: function () {
         var s = options.status();

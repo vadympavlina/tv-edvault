@@ -1,6 +1,6 @@
 // Run: node tests/alerts.test.mjs  (also runs in CI before every deploy)
 import assert from "node:assert";
-import { summarize, sameState } from "../worker/src/alerts.js";
+import { summarize, sameState, summarizeIot, oblastPlaces } from "../worker/src/alerts.js";
 
 const alert = (over) => ({
   location_type: "oblast",
@@ -58,5 +58,30 @@ assert.strictEqual(summarize([alert({ alert_type: "something_new" })]).level, "n
 assert.ok(sameState({ level: "none" }, { level: "none" }));
 assert.ok(!sameState({ level: "none" }, { level: "red", kind: "air_raid", since: 1 }));
 assert.ok(!sameState({ level: "red", kind: "air_raid", since: 1 }, { level: "red", kind: "air_raid", since: 2 }));
+
+// Backup IoT string: index = location uid (5 = oblast, 112 = Rivne raion).
+const iot = (marks) => {
+  const chars = [" "].concat(Array(200).fill("N"));
+  for (const uid in marks) chars[uid] = marks[uid];
+  return chars.join("");
+};
+assert.strictEqual(summarizeIot(iot({})).level, "none");
+assert.strictEqual(summarizeIot(iot({ 5: "R" })).level, "red");
+assert.strictEqual(summarizeIot(iot({ 5: "A" })).level, "red");
+assert.strictEqual(summarizeIot(iot({ 5: "Y" })).level, "yellow");
+assert.strictEqual(summarizeIot(iot({ 5: "P", 112: "R" })).level, "red");
+assert.strictEqual(summarizeIot(iot({ 5: "P", 113: "R" })).level, "none"); // Сарненський район
+assert.strictEqual(summarizeIot(iot({ 8: "R" })).level, "none"); // another oblast
+assert.strictEqual(summarizeIot("").level, "none");
+
+// Place names in our oblast, marked whether they count.
+const seen = oblastPlaces([
+  alert({ location_type: "city", location_uid: "901", location_title: "м. Рівне" }),
+  alert({ location_type: "raion", location_uid: "70", location_title: "Сарненський район" }),
+  alert({ location_type: "raion", location_uid: "70", location_title: "Сарненський район" }),
+  alert({ location_uid: "8", location_oblast_uid: "8", location_title: "Волинська область" }),
+  alert({ location_type: "city", location_uid: "905", location_title: "м. Дубно", finished_at: "2026-10-23T11:00:00.000Z" }),
+]);
+assert.deepStrictEqual(seen.map((p) => [p.title, p.counted]), [["м. Рівне", true], ["Сарненський район", false]]);
 
 console.log("alerts.js: all assertions passed");

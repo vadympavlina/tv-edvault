@@ -949,10 +949,13 @@
     nuclear: "Радіаційна загроза",
   };
 
+  var PLACE_TYPES = { oblast: "область", raion: "район", hromada: "громада", city: "місто" };
+
   function alertText(a) {
+    if (a && a.stale) return "Немає свіжих даних · на екрані не показуємо";
     if (!a || a.level === "none") return "Відбій · тривоги немає";
     if (a.level === "yellow") return "Попередня загроза";
-    return (ALERT_KINDS[a.kind] || ALERT_KINDS.air_raid) + (a.source === "manual" ? " (тест)" : "");
+    return (ALERT_KINDS[a.kind] || ALERT_KINDS.air_raid) + (a.source === "manual" ? " (тест)" : a.source === "iot" ? " (запасне джерело)" : "");
   }
 
   function renderAlerts() {
@@ -964,7 +967,7 @@
     var api = alerts.api || {};
     var effective = alerts.effective || { level: "none" };
     var level = effective.level;
-    var noData = !alerts.configured || (api.error && !api.paused);
+    var noData = !alerts.configured || effective.stale || (api.error && !api.paused && !api.fallback);
 
     card.className = "card alert-card" + (level === "red" ? " is-red" : level === "yellow" ? " is-yellow" : noData || api.paused ? " is-unknown" : "");
     $("alert-pill").className = "pill" + (level === "red" ? " is-error" : level === "yellow" ? " is-warning" : noData ? "" : " is-ok");
@@ -977,12 +980,17 @@
       source.textContent = "Ключ alerts.in.ua не додано на сервер (секрет ALERTS_TOKEN).";
     } else if (api.paused) {
       source.textContent = "Зараз чорний екран, тож тривоги не перевіряємо. Почнемо за 15 хв до увімкнення розкладу.";
+    } else if (api.error && api.fallback) {
+      source.textContent =
+        "Основні дані alerts.in.ua недоступні з " + stampText(api.errorSince) + " (" + alertErrorText(api.error) + "), працюємо через запасне джерело: лише повітряна тривога для області й Рівненського району · перевірено " + ago(now - api.checkedAt) + ".";
     } else if (api.error) {
       source.textContent =
-        "Немає свіжих даних від alerts.in.ua з " + stampText(api.errorSince) + " (" + alertErrorText(api.error) + "). На екрані лишається останній відомий стан.";
+        "Немає свіжих даних від alerts.in.ua з " + stampText(api.errorSince) + " (" + alertErrorText(api.error) + ")." + (effective.stale ? " Без свіжих даних тривогу на екрані не показуємо." : " Поки що на екрані останній відомий стан, через 10 хв без даних він зникне.");
     } else {
       source.textContent = "Дані alerts.in.ua" + (api.checkedAt ? " · перевірено " + ago(now - api.checkedAt) : " · ще не перевіряли");
     }
+
+    renderAlertPlaces(alerts.places || [], now);
 
     var manual = alerts.manual;
     $("alert-test").hidden = !!manual;
@@ -1001,6 +1009,24 @@
         var li = el("li", "event event-" + e.level);
         li.appendChild(el("span", "event-time", stampText(e.at)));
         li.appendChild(el("span", "event-text", alertText(e)));
+        list.appendChild(li);
+      });
+  }
+
+  function renderAlertPlaces(places, now) {
+    $("alert-places").hidden = !places.length;
+    $("alert-places-title").textContent = "Назви місць від alerts.in.ua (" + places.length + ")";
+    var list = $("alert-places-list");
+    list.textContent = "";
+    places
+      .slice()
+      .sort(function (a, b) {
+        return b.counted - a.counted || b.lastAt - a.lastAt;
+      })
+      .forEach(function (p) {
+        var li = el("li");
+        li.appendChild(el("span", p.counted ? "is-ours" : "", p.title + (p.counted ? " · показуємо на екрані" : "")));
+        li.appendChild(el("small", "", (PLACE_TYPES[p.type] || p.type) + " · " + stampText(p.lastAt)));
         list.appendChild(li);
       });
   }

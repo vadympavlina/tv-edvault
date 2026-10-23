@@ -16,6 +16,7 @@ const KINDS = ["air_raid", "artillery_shelling", "urban_fights", "chemical", "nu
 const RED_ORDER = ["nuclear", "chemical", "urban_fights", "air_raid", "artillery_shelling"];
 
 export const DEFAULT_OBLAST_UID = "5"; // Рівненська область
+export const DEFAULT_RAION_UID = "112"; // Рівненський район (the city is in it)
 // Location titles that count as "our place" (besides the whole oblast).
 export const DEFAULT_PLACES = "^(Рівненський район|(м\\. )?Рівне( .*)?|Рівненська (міська |територіальна )*громада.*)$";
 
@@ -57,30 +58,79 @@ function titles(alerts) {
   return Array.from(new Set(alerts.map((a) => a.location_title).filter(Boolean))).sort();
 }
 
+// Every active alert in our oblast, counted or not, so the settings page can show which
+// place names the API actually uses (and whether we matched Rivne correctly).
+export function oblastPlaces(alerts, oblastUid = DEFAULT_OBLAST_UID, placesPattern = DEFAULT_PLACES) {
+  const places = new RegExp(placesPattern);
+  const seen = new Map();
+  for (const a of alerts || []) {
+    if (a.finished_at || String(a.location_oblast_uid || a.location_uid || "") !== String(oblastUid)) continue;
+    const title = String(a.location_title || "").trim();
+    if (!title || seen.has(title)) continue;
+    seen.set(title, { title, type: a.location_type || "", counted: coversUs(a, oblastUid, places) });
+  }
+  return Array.from(seen.values());
+}
+
+// Backup source: the light "IoT" endpoint made for status boards. One character per location
+// uid (index = uid): N none, P partly, R red, Y yellow, A active (no level). Air raids only and
+// no start time, so it is used only when the main endpoint fails.
+export function summarizeIot(text, oblastUid = DEFAULT_OBLAST_UID, raionUid = DEFAULT_RAION_UID) {
+  const str = String(text || "");
+  const level = (c) => (c === "R" || c === "A" ? "red" : c === "Y" ? "yellow" : null);
+  const found = level(str.charAt(Number(oblastUid))) || level(str.charAt(Number(raionUid)));
+  return found ? { level: found, kind: "air_raid", since: null } : { level: "none" };
+}
+
 export function sameState(a, b) {
   return (
     !!a && !!b && a.level === b.level && (a.kind || null) === (b.kind || null) && (a.since || null) === (b.since || null)
   );
 }
 
+function apiBase(env) {
+  return String(env.ALERTS_API_URL || "https://api.alerts.in.ua").replace(/\/+$/, "");
+}
+
+// One poll of the backup endpoint. Keeps the start time of the alert we already know about.
+export async function fetchIotState(env, previous) {
+  const response = await fetch(apiBase(env) + "/v2/iot/active_air_raid_alerts.json", {
+    headers: { Authorization: "Bearer " + env.ALERTS_TOKEN, Accept: "application/json" },
+  });
+  if (!response.ok) {
+    const error = new Error("alerts.in.ua (iot) answered " + response.status);
+    error.status = response.status;
+    throw error;
+  }
+  const state = summarizeIot(await response.json(), env.ALERT_OBLAST_UID || DEFAULT_OBLAST_UID, env.ALERT_RAION_UID || DEFAULT_RAION_UID);
+  if (state.level !== "none") {
+    const before = previous && previous.state;
+    state.since = before && before.level !== "none" && before.since ? before.since : Date.now();
+  }
+  return state;
+}
+
 // One poll. `previous` is what the last poll stored ({ state, lastModified }).
-// Returns { state, lastModified, status } or throws with .status on failure.
+// Returns { state, places, lastModified, status } or throws with .status on failure.
 export async function fetchState(env, previous) {
-  const base = String(env.ALERTS_API_URL || "https://api.alerts.in.ua").replace(/\/+$/, "");
+  const base = apiBase(env);
   const headers = { Authorization: "Bearer " + env.ALERTS_TOKEN, Accept: "application/json" };
   // Only download when something changed (the API answers 304 otherwise).
   if (previous && previous.state && previous.lastModified) headers["If-Modified-Since"] = previous.lastModified;
 
   const response = await fetch(base + "/v1/alerts/active.json", { headers });
-  if (response.status === 304) return { state: previous.state, lastModified: previous.lastModified, status: 304 };
+  if (response.status === 304) return { state: previous.state, places: null, lastModified: previous.lastModified, status: 304 };
   if (!response.ok) {
     const error = new Error("alerts.in.ua answered " + response.status);
     error.status = response.status;
     throw error;
   }
   const data = await response.json();
+  const oblastUid = env.ALERT_OBLAST_UID || DEFAULT_OBLAST_UID;
+  const pattern = env.ALERT_PLACES || DEFAULT_PLACES;
   return {
-    state: summarize(data.alerts, env.ALERT_OBLAST_UID || DEFAULT_OBLAST_UID, env.ALERT_PLACES || DEFAULT_PLACES),
+    state: summarize(data.alerts, oblastUid, pattern),
+    places: oblastPlaces(data.alerts, oblastUid, pattern),
     lastModified: response.headers.get("Last-Modified") || null,
     status: response.status,
   };

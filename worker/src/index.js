@@ -22,7 +22,7 @@
 // ADMIN_PASSWORD is a Worker secret. Sessions are HMAC-signed with a key derived from it,
 // so changing the password signs everybody out.
 import "../../schedule.js";
-import { fetchState, sameState } from "./alerts.js";
+import { fetchIotState, fetchState, sameState } from "./alerts.js";
 
 const Schedule = globalThis.TVSchedule;
 
@@ -52,6 +52,8 @@ const OVERRIDE_MAX_MS = 14 * 24 * 60 * 60 * 1000;
 // night. The last result is written at least this often so the settings page can tell it is fresh.
 const ALERT_POLL_AHEAD_MS = 15 * 60 * 1000;
 const ALERT_META_WRITE_MS = 5 * 60 * 1000;
+const ALERT_STALE_MS = 10 * 60 * 1000; // no fresh data for this long: show nothing rather than guess
+const ALERT_PLACES_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
 const ALERT_TEST_MS = 10 * 60 * 1000; // a test alert from the settings page ends by itself
 const ALERT_LOG_KEEP_MS = 48 * 60 * 60 * 1000;
 
@@ -482,14 +484,17 @@ export class Hub {
     if (manual && manual.level === "red" && manual.until > Date.now()) return { ...manual, source: "manual" };
     const state = api && api.state;
     if (!state || state.level === "none") return { level: "none" };
-    return { level: state.level, kind: state.kind, since: state.since, source: "api" };
+    // Neither source has answered for a while: the alert may be long over. Show nothing.
+    if (!api.checkedAt || Date.now() - api.checkedAt > ALERT_STALE_MS) return { level: "none", stale: true };
+    return { level: state.level, kind: state.kind, since: state.since, source: api.fallback ? "iot" : "api" };
   }
 
   async adminAlerts() {
-    const [api, manual, log] = await Promise.all([
+    const [api, manual, log, places] = await Promise.all([
       this.ctx.storage.get("alertApi"),
       this.ctx.storage.get("alertManual"),
       this.ctx.storage.get("alertLog"),
+      this.ctx.storage.get("alertPlaces"),
     ]);
     return {
       configured: !!this.env.ALERTS_TOKEN,
@@ -497,6 +502,7 @@ export class Hub {
       api: api || null,
       manual: manual && manual.until > Date.now() ? manual : null,
       log: log || [],
+      places: places || [],
     };
   }
 
@@ -515,75 +521,100 @@ export class Hub {
   async pollAlerts() {
     // A test alert ran out: take it off the TV.
     const manual = await this.ctx.storage.get("alertManual");
-    if (manual && !(manual.until > Date.now())) {
-      await this.ctx.storage.delete("alertManual");
-      await this.alertChanged({ level: manual.level, kind: manual.kind, since: manual.since });
-    }
-    if (!this.env.ALERTS_TOKEN) return { skipped: "no_token" };
-    const before = await this.effectiveAlert();
+    if (manual && !(manual.until > Date.now())) await this.ctx.storage.delete("alertManual");
+    if (!this.env.ALERTS_TOKEN) return this.alertChanged();
     const meta = (await this.ctx.storage.get("alertApi")) || {};
     const now = Date.now();
     let next;
+    let places = null;
 
     if (!(await this.screenOnSoon())) {
       // Night: no polling. Forget the last state so a stale alert never shows in the morning.
-      if (meta.paused) return { skipped: "night" };
+      if (meta.paused) return this.alertChanged();
       next = { paused: true, state: { level: "none" }, checkedAt: meta.checkedAt || null };
     } else {
       try {
-        const result = await fetchState(this.env, meta.paused ? null : meta);
+        const result = await fetchState(this.env, meta.paused || meta.fallback ? null : meta);
         next = { state: result.state, lastModified: result.lastModified, checkedAt: now, error: null, errorSince: null };
+        places = result.places;
       } catch (error) {
-        // Keep the last known state; the settings page says data is missing.
-        next = {
-          ...meta,
-          paused: false,
-          error: String(error.status || "network"),
-          errorSince: meta.errorSince || now,
-        };
+        const failed = { error: String(error.status || "network"), errorSince: meta.errorSince || now };
+        try {
+          // The main endpoint failed: the light backup one still tells whether Rivne has an air raid.
+          const state = await fetchIotState(this.env, meta);
+          next = { state, lastModified: null, checkedAt: now, fallback: true, ...failed };
+        } catch (backupError) {
+          // Nothing works: keep the last state. After ALERT_STALE_MS the TV stops showing it.
+          next = { ...meta, paused: false, ...failed };
+        }
       }
     }
 
     const changed =
       !sameState(meta.state, next.state) ||
       (meta.error || null) !== (next.error || null) ||
+      !!meta.fallback !== !!next.fallback ||
       !!meta.paused !== !!next.paused ||
       now - (meta.writtenAt || 0) >= ALERT_META_WRITE_MS;
     if (changed) {
       next.writtenAt = now;
       await this.ctx.storage.put("alertApi", next);
-      await this.alertChanged(before);
     }
+    if (places && places.length) await this.rememberPlaces(places);
+    await this.alertChanged();
     return { state: next.state, error: next.error || null };
+  }
+
+  // Place names in our oblast seen in alerts over the last week, for the settings page.
+  async rememberPlaces(places) {
+    const now = Date.now();
+    const known = ((await this.ctx.storage.get("alertPlaces")) || []).filter((p) => now - p.lastAt < ALERT_PLACES_KEEP_MS);
+    let dirty = false;
+    for (const place of places) {
+      const old = known.find((p) => p.title === place.title);
+      if (!old) {
+        known.push({ ...place, lastAt: now });
+        dirty = true;
+      } else if (now - old.lastAt >= ALERT_META_WRITE_MS || old.counted !== place.counted) {
+        Object.assign(old, place, { lastAt: now });
+        dirty = true;
+      }
+    }
+    if (dirty) await this.ctx.storage.put("alertPlaces", known.slice(-100));
   }
 
   async saveManualAlert(request) {
     const body = await readJson(request);
-    const before = await this.effectiveAlert();
     if (body.mode === "red") {
       const now = Date.now();
       await this.ctx.storage.put("alertManual", { level: "red", kind: "air_raid", since: now, until: now + ALERT_TEST_MS });
     } else {
       await this.ctx.storage.delete("alertManual");
     }
-    await this.alertChanged(before, true);
+    await this.alertChanged();
     return { alerts: await this.adminAlerts() };
   }
 
-  // Push a changed alert to the TVs, log it, and refresh open settings pages.
-  async alertChanged(before, force) {
-    const after = await this.effectiveAlert();
+  // Push a changed alert to the TVs, log it, and refresh open settings pages. Compares with
+  // what the TVs were last sent, so changes that come with time alone (a test alert running
+  // out, data going stale) are caught by the next minute's poll.
+  async alertChanged() {
+    const [after, sent] = await Promise.all([this.effectiveAlert(), this.ctx.storage.get("alertSent")]);
+    const before = sent || { level: "none" };
     const different = before.level !== after.level || before.kind !== after.kind || before.since !== after.since;
     if (different) {
+      await this.ctx.storage.put("alertSent", after);
       this.broadcastTvs({ type: "alert", alert: after, serverTime: Date.now() });
       const log = ((await this.ctx.storage.get("alertLog")) || []).filter((e) => Date.now() - e.at < ALERT_LOG_KEEP_MS);
-      log.push({ at: Date.now(), level: after.level, kind: after.kind || null, source: after.source || null });
+      log.push({ at: Date.now(), level: after.level, kind: after.kind || null, source: after.source || null, stale: !!after.stale });
       await this.ctx.storage.put("alertLog", log.slice(-300));
     }
-    if (different || force || openSockets(this.ctx, "admin").length) {
+    const admins = openSockets(this.ctx, "admin");
+    if (admins.length) {
       const alerts = await this.adminAlerts();
-      for (const ws of openSockets(this.ctx, "admin")) send(ws, { type: "alerts", alerts });
+      for (const ws of admins) send(ws, { type: "alerts", alerts });
     }
+    return { alert: after };
   }
 
   async saveOverride(request) {
