@@ -9,7 +9,7 @@ workers_dev = true
 # Wall clock for the schedule (same as timeZone in config.js).
 TIME_ZONE = "Europe/Kyiv"
 # Origins allowed to call the admin routes with credentials.
-ALLOWED_ORIGINS = "https://vadympavlina.github.io,http://localhost:8765,http://localhost:8000"
+ALLOWED_ORIGINS = "https://tv.edvault.online,https://vadympavlina.github.io,http://localhost:8765,http://localhost:8000"
 
 # All state lives in one Durable Object (free plan: SQLite-backed).
 [[durable_objects.bindings]]
