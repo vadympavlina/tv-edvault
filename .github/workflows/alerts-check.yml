@@ -27,6 +27,12 @@ jobs:
           jq -c '.alerts | length as $n | "alerts in the country: \($n)"' active.json || head -c 500 active.json
           jq -c '.alerts[] | select((.location_oblast_uid|tostring) == "5" or (.location_uid|tostring) == "5")
                  | {location_title, location_type, location_uid, location_oblast_uid, alert_type, alert_level, started_at, finished_at}' active.json || true
+          echo "--- anything mentioning Рівн or uid 112:"
+          jq -c '.alerts[] | select((tostring | test("Рівн")) or (.location_uid|tostring) == "112")' active.json || true
+          echo "--- fields of the first alert:"
+          jq -c '.alerts[0]' active.json || true
+          echo "--- top-level keys:"
+          jq -c 'keys' active.json || true
 
       - name: alerts.in.ua — IoT string (5 = oblast, 112 = Rivne raion)
         run: |
