@@ -1,0 +1,45 @@
+name: Check air raid alerts
+
+# Run by hand (Actions → Check air raid alerts → Run workflow) when the TV does not show an
+# alert that is on: prints what alerts.in.ua says about Rivne oblast right now and what the
+# settings server holds. Secrets are never printed.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      ALERTS_TOKEN: ${{ secrets.ALERTS_TOKEN }}
+      TV_ADMIN_PASSWORD: ${{ secrets.TV_ADMIN_PASSWORD }}
+      API: https://tv-edvault.vadym-pavlina.workers.dev
+    steps:
+      - name: Time
+        run: TZ=Europe/Kyiv date
+
+      - name: alerts.in.ua — active alerts in Rivne oblast
+        run: |
+          code=$(curl -sS -o active.json -w '%{http_code}' -H "Authorization: Bearer $ALERTS_TOKEN" https://api.alerts.in.ua/v1/alerts/active.json)
+          echo "HTTP $code"
+          jq -c '.alerts | length as $n | "alerts in the country: \($n)"' active.json || head -c 500 active.json
+          jq -c '.alerts[] | select((.location_oblast_uid|tostring) == "5" or (.location_uid|tostring) == "5")
+                 | {location_title, location_type, location_uid, location_oblast_uid, alert_type, alert_level, started_at, finished_at}' active.json || true
+
+      - name: alerts.in.ua — IoT string (5 = oblast, 112 = Rivne raion)
+        run: |
+          code=$(curl -sS -o iot.json -w '%{http_code}' -H "Authorization: Bearer $ALERTS_TOKEN" https://api.alerts.in.ua/v2/iot/active_air_raid_alerts.json)
+          echo "HTTP $code"
+          s=$(jq -r . iot.json 2>/dev/null || cat iot.json)
+          echo "oblast: '${s:5:1}'  raion: '${s:112:1}'  length: ${#s}"
+
+      - name: Settings server — alert state
+        run: |
+          token=$(curl -sS -X POST "$API/login" -H 'Content-Type: application/json' \
+            -d "$(jq -n --arg p "$TV_ADMIN_PASSWORD" '{password: $p}')" | jq -r '.token // empty')
+          if [ -z "$token" ]; then echo "login failed"; exit 1; fi
+          echo "::add-mask::$token"
+          curl -sS "$API/admin" -H "Authorization: Bearer $token" \
+            | jq '{override, alerts: (.alerts | {configured, effective, manual, places, api, log: (.log[-10:])}), screens: [.screens[]? | {name, online, state}]}'
