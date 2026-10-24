@@ -20,6 +20,10 @@ export const DEFAULT_RAION_UID = "112"; // Рівненський район (th
 // Location titles that count as "our place" (besides the whole oblast).
 export const DEFAULT_PLACES = "^(Рівненський район|(м\\. )?Рівне( .*)?|Рівненська (міська |територіальна )*громада.*)$";
 
+// Bump when the rules below change: a state saved under older rules is then recomputed from a
+// full download instead of being kept by a 304 Not Modified.
+export const RULES_VERSION = 2;
+
 export const DEFAULT_OBLAST_TITLE = "Рівненська область";
 
 // Is this alert somewhere in our oblast? Not by location_oblast_uid alone: for raions the live
@@ -127,7 +131,9 @@ export async function fetchState(env, previous) {
   const base = apiBase(env);
   const headers = { Authorization: "Bearer " + env.ALERTS_TOKEN, Accept: "application/json" };
   // Only download when something changed (the API answers 304 otherwise).
-  if (previous && previous.state && previous.lastModified) headers["If-Modified-Since"] = previous.lastModified;
+  if (previous && previous.state && previous.lastModified && previous.rules === RULES_VERSION) {
+    headers["If-Modified-Since"] = previous.lastModified;
+  }
 
   const response = await fetch(base + "/v1/alerts/active.json", { headers });
   if (response.status === 304) return { state: previous.state, places: null, lastModified: previous.lastModified, status: 304 };

@@ -22,7 +22,7 @@
 // ADMIN_PASSWORD is a Worker secret. Sessions are HMAC-signed with a key derived from it,
 // so changing the password signs everybody out.
 import "../../schedule.js";
-import { fetchIotState, fetchState, sameState } from "./alerts.js";
+import { RULES_VERSION, fetchIotState, fetchState, sameState } from "./alerts.js";
 
 const Schedule = globalThis.TVSchedule;
 
@@ -535,7 +535,14 @@ export class Hub {
     } else {
       try {
         const result = await fetchState(this.env, meta.paused || meta.fallback ? null : meta);
-        next = { state: result.state, lastModified: result.lastModified, checkedAt: now, error: null, errorSince: null };
+        next = {
+          state: result.state,
+          lastModified: result.lastModified,
+          rules: RULES_VERSION,
+          checkedAt: now,
+          error: null,
+          errorSince: null,
+        };
         places = result.places;
       } catch (error) {
         const failed = { error: String(error.status || "network"), errorSince: meta.errorSince || now };
@@ -554,6 +561,7 @@ export class Hub {
       !sameState(meta.state, next.state) ||
       (meta.error || null) !== (next.error || null) ||
       !!meta.fallback !== !!next.fallback ||
+      meta.rules !== next.rules ||
       !!meta.paused !== !!next.paused ||
       now - (meta.writtenAt || 0) >= ALERT_META_WRITE_MS;
     if (changed) {
