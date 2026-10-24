@@ -20,12 +20,23 @@ export const DEFAULT_RAION_UID = "112"; // Рівненський район (th
 // Location titles that count as "our place" (besides the whole oblast).
 export const DEFAULT_PLACES = "^(Рівненський район|(м\\. )?Рівне( .*)?|Рівненська (міська |територіальна )*громада.*)$";
 
+export const DEFAULT_OBLAST_TITLE = "Рівненська область";
+
+// Is this alert somewhere in our oblast? Not by location_oblast_uid alone: for raions the live
+// API puts the raion's own uid there (Рівненський район: location_uid "112",
+// location_oblast_uid 112), so the oblast's name in location_oblast counts too.
+export function inOblast(alert, oblastUid = DEFAULT_OBLAST_UID, oblastTitle = DEFAULT_OBLAST_TITLE) {
+  if (!alert) return false;
+  return (
+    String(alert.location_oblast_uid ?? "") === String(oblastUid) ||
+    String(alert.location_uid ?? "") === String(oblastUid) ||
+    String(alert.location_oblast || "").trim() === oblastTitle
+  );
+}
+
 // Does this alert cover our place?
-export function coversUs(alert, oblastUid, places) {
-  if (!alert || String(alert.location_oblast_uid || "") !== String(oblastUid)) {
-    // An oblast-wide alert may carry its uid only in location_uid.
-    if (!(alert && alert.location_type === "oblast" && String(alert.location_uid) === String(oblastUid))) return false;
-  }
+export function coversUs(alert, oblastUid, places, oblastTitle = DEFAULT_OBLAST_TITLE) {
+  if (!inOblast(alert, oblastUid, oblastTitle)) return false;
   if (alert.location_type === "oblast") return true;
   return places.test(String(alert.location_title || "").trim());
 }
@@ -64,7 +75,7 @@ export function oblastPlaces(alerts, oblastUid = DEFAULT_OBLAST_UID, placesPatte
   const places = new RegExp(placesPattern);
   const seen = new Map();
   for (const a of alerts || []) {
-    if (a.finished_at || String(a.location_oblast_uid || a.location_uid || "") !== String(oblastUid)) continue;
+    if (a.finished_at || !inOblast(a, oblastUid)) continue;
     const title = String(a.location_title || "").trim();
     if (!title || seen.has(title)) continue;
     seen.set(title, { title, type: a.location_type || "", counted: coversUs(a, oblastUid, places) });

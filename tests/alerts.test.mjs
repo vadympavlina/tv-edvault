@@ -59,6 +59,35 @@ assert.ok(sameState({ level: "none" }, { level: "none" }));
 assert.ok(!sameState({ level: "none" }, { level: "red", kind: "air_raid", since: 1 }));
 assert.ok(!sameState({ level: "red", kind: "air_raid", since: 1 }, { level: "red", kind: "air_raid", since: 2 }));
 
+// Real records from the live API (24.10.2026): raions carry their own uid in
+// location_oblast_uid and the oblast only by name.
+const live = (over) => ({
+  location_type: "raion",
+  location_oblast: "Рівненська область",
+  alert_type: "air_raid",
+  alert_level: "yellow",
+  started_at: "2026-10-24T06:57:22.186Z",
+  finished_at: null,
+  ...over,
+});
+s = summarize([
+  live({ location_title: "Рівненський район", location_uid: "112", location_oblast_uid: 112 }),
+  live({ location_title: "Сарненський район", location_uid: "113", location_oblast_uid: 113 }),
+]);
+assert.deepStrictEqual([s.level, s.since, s.places], ["yellow", Date.parse("2026-10-24T06:57:22.186Z"), ["Рівненський район"]]);
+assert.strictEqual(
+  summarize([live({ location_title: "Сарненський район", location_uid: "113", location_oblast_uid: 113 })]).level,
+  "none"
+);
+assert.strictEqual(
+  summarize([live({ location_title: "Луцький район", location_uid: "40", location_oblast_uid: 40, location_oblast: "Волинська область" })]).level,
+  "none"
+);
+assert.deepStrictEqual(
+  oblastPlaces([live({ location_title: "Рівненський район", location_uid: "112", location_oblast_uid: 112 })]).map((p) => p.counted),
+  [true]
+);
+
 // Backup IoT string: index = location uid (5 = oblast, 112 = Rivne raion).
 const iot = (marks) => {
   const chars = [" "].concat(Array(200).fill("N"));
