@@ -22,7 +22,7 @@ export const DEFAULT_PLACES = "^(Рівненський район|(м\\. )?Рі
 
 // Bump when the rules below change: a state saved under older rules is then recomputed from a
 // full download instead of being kept by a 304 Not Modified.
-export const RULES_VERSION = 2;
+export const RULES_VERSION = 3;
 
 export const DEFAULT_OBLAST_TITLE = "Рівненська область";
 
@@ -97,6 +97,37 @@ export function summarizeIot(text, oblastUid = DEFAULT_OBLAST_UID, raionUid = DE
   return found ? { level: found, kind: "air_raid", since: null } : { level: "none" };
 }
 
+const RANK = { none: 0, yellow: 1, red: 2 };
+
+// Cross-check of the two endpoints. The full list knows every kind of alert and every place, the
+// light one knows only air raids for the oblast and raion, but it caught the Rivne raion alert
+// on 24.10.2026 when our reading of the full list did not. When the light one says more, trust
+// it (better a needless alert than a missed one) and report that the sources disagree.
+// A city-only alert legitimately shows in the full list alone, so that direction is no conflict.
+export function combine(main, iot, previous) {
+  if (!iot || RANK[iot.level] <= RANK[main.level]) return { state: main, source: "api", disagree: false };
+  const keep = previous && previous.level === iot.level && previous.since;
+  return { state: { level: iot.level, kind: "air_raid", since: keep || iot.since || Date.now() }, source: "iot", disagree: true };
+}
+
+// Everything the full list says about our oblast, for the "check now" button.
+export function oblastRecords(alerts, oblastUid = DEFAULT_OBLAST_UID, placesPattern = DEFAULT_PLACES) {
+  const places = new RegExp(placesPattern);
+  return (alerts || [])
+    .filter((a) => !a.finished_at && inOblast(a, oblastUid))
+    .map((a) => ({
+      title: a.location_title || "",
+      type: a.location_type || "",
+      uid: a.location_uid ?? null,
+      oblastUid: a.location_oblast_uid ?? null,
+      alertType: a.alert_type || "",
+      level: a.alert_level || null,
+      startedAt: a.started_at || null,
+      threats: (a.threats || []).map((t) => t.source_message || t.threat_type).filter(Boolean),
+      counted: KINDS.includes(a.alert_type) && coversUs(a, oblastUid, places),
+    }));
+}
+
 export function sameState(a, b) {
   return (
     !!a && !!b && a.level === b.level && (a.kind || null) === (b.kind || null) && (a.since || null) === (b.since || null)
@@ -107,8 +138,7 @@ function apiBase(env) {
   return String(env.ALERTS_API_URL || "https://api.alerts.in.ua").replace(/\/+$/, "");
 }
 
-// One poll of the backup endpoint. Keeps the start time of the alert we already know about.
-export async function fetchIotState(env, previous) {
+async function fetchIotText(env) {
   const response = await fetch(apiBase(env) + "/v2/iot/active_air_raid_alerts.json", {
     headers: { Authorization: "Bearer " + env.ALERTS_TOKEN, Accept: "application/json" },
   });
@@ -117,7 +147,13 @@ export async function fetchIotState(env, previous) {
     error.status = response.status;
     throw error;
   }
-  const state = summarizeIot(await response.json(), env.ALERT_OBLAST_UID || DEFAULT_OBLAST_UID, env.ALERT_RAION_UID || DEFAULT_RAION_UID);
+  return String(await response.json());
+}
+
+// One poll of the light endpoint. Keeps the start time of the alert we already know about.
+export async function fetchIotState(env, previous) {
+  const text = await fetchIotText(env);
+  const state = summarizeIot(text, env.ALERT_OBLAST_UID || DEFAULT_OBLAST_UID, env.ALERT_RAION_UID || DEFAULT_RAION_UID);
   if (state.level !== "none") {
     const before = previous && previous.state;
     state.since = before && before.level !== "none" && before.since ? before.since : Date.now();
@@ -125,8 +161,9 @@ export async function fetchIotState(env, previous) {
   return state;
 }
 
-// One poll. `previous` is what the last poll stored ({ state, lastModified }).
-// Returns { state, places, lastModified, status } or throws with .status on failure.
+// One poll of the full list. `previous` is what the last poll got from it
+// ({ state, lastModified, rules }). Returns { state, places, lastModified, status } or throws
+// with .status on failure.
 export async function fetchState(env, previous) {
   const base = apiBase(env);
   const headers = { Authorization: "Bearer " + env.ALERTS_TOKEN, Accept: "application/json" };
@@ -151,4 +188,36 @@ export async function fetchState(env, previous) {
     lastModified: response.headers.get("Last-Modified") || null,
     status: response.status,
   };
+}
+
+// "Check now" from the settings page: both endpoints, downloaded in full, and what we make of them.
+export async function checkNow(env) {
+  const oblastUid = env.ALERT_OBLAST_UID || DEFAULT_OBLAST_UID;
+  const raionUid = env.ALERT_RAION_UID || DEFAULT_RAION_UID;
+  const pattern = env.ALERT_PLACES || DEFAULT_PLACES;
+  const report = { at: Date.now(), main: null, iot: null };
+  const headers = { Authorization: "Bearer " + env.ALERTS_TOKEN, Accept: "application/json" };
+  const [main, iot] = await Promise.allSettled([
+    fetch(apiBase(env) + "/v1/alerts/active.json", { headers }).then(async (response) => {
+      if (!response.ok) return { status: response.status };
+      const data = await response.json();
+      return {
+        status: response.status,
+        total: (data.alerts || []).length,
+        records: oblastRecords(data.alerts, oblastUid, pattern),
+        state: summarize(data.alerts, oblastUid, pattern),
+      };
+    }),
+    fetchIotText(env).then((text) => ({
+      status: 200,
+      oblast: text.charAt(Number(oblastUid)) || "",
+      raion: text.charAt(Number(raionUid)) || "",
+      state: summarizeIot(text, oblastUid, raionUid),
+    })),
+  ]);
+  report.main = main.status === "fulfilled" ? main.value : { status: "network" };
+  report.iot = iot.status === "fulfilled" ? iot.value : { status: iot.reason && iot.reason.status ? iot.reason.status : "network" };
+  const result = combine(report.main.state || { level: "none" }, report.iot.state || null, null);
+  report.verdict = { level: result.state.level, kind: result.state.kind || null, source: result.source, disagree: result.disagree };
+  return report;
 }

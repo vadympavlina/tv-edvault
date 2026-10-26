@@ -954,7 +954,7 @@
   function alertText(a) {
     if (a && a.stale) return "Немає свіжих даних · на екрані не показуємо";
     if (!a || a.level === "none") return "Відбій · тривоги немає";
-    if (a.level === "yellow") return "Попередня загроза";
+    if (a.level === "yellow") return "Попередня загроза" + (a.source === "iot" ? " (запасне джерело)" : "");
     return (ALERT_KINDS[a.kind] || ALERT_KINDS.air_raid) + (a.source === "manual" ? " (тест)" : a.source === "iot" ? " (запасне джерело)" : "");
   }
 
@@ -975,7 +975,7 @@
       level !== "none" ? alertText(effective) + (effective.since ? " · " + duration(now - effective.since) : "") : !alerts.configured ? "Не налаштовано" : api.paused ? "Не перевіряємо" : noData ? "Немає даних" : "Тривоги немає";
 
     var source = $("alert-source");
-    source.classList.toggle("is-error", !!noData);
+    source.classList.toggle("is-error", !!noData || !!api.disagreeSince);
     if (!alerts.configured) {
       source.textContent = "Ключ alerts.in.ua не додано на сервер (секрет ALERTS_TOKEN).";
     } else if (api.paused) {
@@ -986,8 +986,14 @@
     } else if (api.error) {
       source.textContent =
         "Немає свіжих даних від alerts.in.ua з " + stampText(api.errorSince) + " (" + alertErrorText(api.error) + ")." + (effective.stale ? " Без свіжих даних тривогу на екрані не показуємо." : " Поки що на екрані останній відомий стан, через 10 хв без даних він зникне.");
+    } else if (api.disagreeSince) {
+      source.textContent =
+        "Джерела розходяться з " + stampText(api.disagreeSince) + ": запасне джерело бачить тривогу для області чи Рівненського району, а повний список — ні. Про всяк випадок показуємо тривогу. Натисніть «Перевірити зараз», щоб побачити подробиці.";
     } else {
-      source.textContent = "Дані alerts.in.ua" + (api.checkedAt ? " · перевірено " + ago(now - api.checkedAt) : " · ще не перевіряли");
+      source.textContent =
+        "Дані alerts.in.ua" +
+        (api.checkedAt ? " · перевірено " + ago(now - api.checkedAt) : " · ще не перевіряли") +
+        (api.iotError ? " · запасне джерело недоступне (" + alertErrorText(api.iotError) + ")" : api.iot ? " · обидва джерела збігаються" : "");
     }
 
     renderAlertPlaces(alerts.places || [], now);
@@ -1011,6 +1017,80 @@
         li.appendChild(el("span", "event-text", alertText(e)));
         list.appendChild(li);
       });
+  }
+
+  // ---------- "Check now" ----------
+
+  var IOT_CHARS = { N: "немає", P: "частково", R: "червона", Y: "жовта", A: "тривога", " ": "немає даних", "": "немає даних" };
+  var LEVEL_TEXT = { red: "червона", yellow: "жовта" };
+
+  function checkAlerts(button) {
+    button.disabled = true;
+    button.textContent = "Перевіряємо…";
+    api("POST", "/alerts/check")
+      .then(function (data) {
+        renderCheck(data.report);
+      })
+      .catch(function (error) {
+        if (error.code === "too_soon") return toast("Зачекайте кілька секунд між перевірками.", "error");
+        handleError(error, "Не вдалося перевірити.");
+      })
+      .then(function () {
+        button.disabled = false;
+        button.textContent = "Перевірити зараз";
+      });
+  }
+
+  function renderCheck(report) {
+    var box = $("alert-check");
+    box.textContent = "";
+    box.hidden = false;
+    var main = report.main || {};
+    var iot = report.iot || {};
+    var verdict = report.verdict || { level: "none" };
+
+    var head = el("p", "alert-check-verdict is-" + verdict.level);
+    head.textContent =
+      "Висновок о " + clockAt(report.at) + ": " +
+      (verdict.level === "none" ? "тривоги для Рівного немає" : verdict.level === "yellow" ? "попередня загроза — смуга внизу" : "тривога — на весь екран") +
+      (verdict.disagree ? " (за запасним джерелом, повний список її не бачить)" : "");
+    box.appendChild(head);
+
+    box.appendChild(
+      el(
+        "p",
+        "alert-check-line",
+        "Повний список: " + (main.status === 200 ? "отримано, тривог по країні " + main.total + ", у Рівненській області " + main.records.length : "помилка (" + alertErrorText(String(main.status)) + ")")
+      )
+    );
+    if (main.records && main.records.length) {
+      var list = el("ul", "alert-check-records");
+      main.records.forEach(function (r) {
+        var li = el("li", r.counted ? "is-ours" : "");
+        li.appendChild(el("b", "", r.title + (r.counted ? " · показуємо" : " · не Рівне")));
+        var bits = [
+          ALERT_KINDS[r.alertType] || r.alertType,
+          LEVEL_TEXT[r.level] || (r.level ? r.level : "рівень не вказано"),
+          PLACE_TYPES[r.type] || r.type,
+          r.startedAt ? "з " + stampText(Date.parse(r.startedAt)) : "",
+          "uid " + r.uid + " / обл. " + r.oblastUid,
+        ].concat(r.threats || []);
+        li.appendChild(el("span", "", bits.filter(Boolean).join(" · ")));
+        list.appendChild(li);
+      });
+      box.appendChild(list);
+    }
+    box.appendChild(
+      el(
+        "p",
+        "alert-check-line",
+        "Запасне джерело: " + (iot.status === 200 ? "область — " + (IOT_CHARS[iot.oblast] || iot.oblast) + ", Рівненський район — " + (IOT_CHARS[iot.raion] || iot.raion) : "помилка (" + alertErrorText(String(iot.status)) + ")")
+      )
+    );
+    var shown = (state.alerts && state.alerts.effective) || { level: "none" };
+    if (shown.source !== "manual" && shown.level !== verdict.level) {
+      box.appendChild(el("p", "hint", "На екрані поки інакше: сервер перевіряє щохвилини, телевізор оновиться протягом хвилини."));
+    }
   }
 
   function renderAlertPlaces(places, now) {
@@ -1426,6 +1506,9 @@
   $("tv-rename-form").addEventListener("submit", submitRename);
   $("tv-rename-cancel").addEventListener("click", function () {
     $("tv-rename-form").hidden = true;
+  });
+  $("alert-check-now").addEventListener("click", function () {
+    checkAlerts(this);
   });
   $("alert-test").addEventListener("click", function () {
     setTestAlert(true, this);

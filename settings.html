@@ -138,9 +138,11 @@
         </div>
         <p id="alert-source" class="alert-source"></p>
         <div class="alert-actions">
+          <button id="alert-check-now" class="btn btn-small" type="button">Перевірити зараз</button>
           <button id="alert-test" class="btn btn-small" type="button">Показати тестову тривогу на 10 хв</button>
           <button id="alert-test-stop" class="btn btn-small btn-danger" type="button" hidden>Зняти тестову тривогу</button>
         </div>
+        <div id="alert-check" class="alert-check" aria-live="polite" hidden></div>
         <ol id="alert-log" class="events"></ol>
         <details id="alert-places" class="others" hidden>
           <summary id="alert-places-title">Назви місць від alerts.in.ua</summary>

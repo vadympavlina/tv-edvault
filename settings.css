@@ -1859,3 +1859,52 @@ body.has-savebar .toast {
   color: var(--ink-faint);
   white-space: nowrap;
 }
+
+.alert-check {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  font-size: 13px;
+}
+
+.alert-check-verdict {
+  font-weight: 600;
+}
+
+.alert-check-verdict.is-red {
+  color: var(--error);
+}
+
+.alert-check-verdict.is-yellow {
+  color: var(--warn);
+}
+
+.alert-check-line {
+  color: var(--ink-dim);
+}
+
+.alert-check-records {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.alert-check-records li {
+  display: grid;
+  gap: 1px;
+  padding-left: 10px;
+  border-left: 3px solid var(--line-strong);
+}
+
+.alert-check-records li.is-ours {
+  border-left-color: var(--error);
+}
+
+.alert-check-records span {
+  color: var(--ink-dim);
+}

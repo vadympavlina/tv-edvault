@@ -22,7 +22,7 @@
 // ADMIN_PASSWORD is a Worker secret. Sessions are HMAC-signed with a key derived from it,
 // so changing the password signs everybody out.
 import "../../schedule.js";
-import { RULES_VERSION, fetchIotState, fetchState, sameState } from "./alerts.js";
+import { RULES_VERSION, checkNow, combine, fetchIotState, fetchState, sameState } from "./alerts.js";
 
 const Schedule = globalThis.TVSchedule;
 
@@ -54,6 +54,7 @@ const ALERT_POLL_AHEAD_MS = 15 * 60 * 1000;
 const ALERT_META_WRITE_MS = 5 * 60 * 1000;
 const ALERT_STALE_MS = 10 * 60 * 1000; // no fresh data for this long: show nothing rather than guess
 const ALERT_PLACES_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
+const ALERT_CHECK_GAP_MS = 15 * 1000; // "check now" spends two of the ~10 requests a minute we may make
 const ALERT_TEST_MS = 10 * 60 * 1000; // a test alert from the settings page ends by itself
 const ALERT_LOG_KEEP_MS = 48 * 60 * 60 * 1000;
 
@@ -136,6 +137,9 @@ export class Hub {
         case "PUT /alert":
           await this.authorize(bearer(request));
           return json(await this.saveManualAlert(request));
+        case "POST /alerts/check":
+          await this.authorize(bearer(request));
+          return json(await this.checkAlertsNow());
         case "POST /internal/alerts/poll":
           return json(await this.pollAlerts());
         case "POST /screens/rename":
@@ -486,7 +490,7 @@ export class Hub {
     if (!state || state.level === "none") return { level: "none" };
     // Neither source has answered for a while: the alert may be long over. Show nothing.
     if (!api.checkedAt || Date.now() - api.checkedAt > ALERT_STALE_MS) return { level: "none", stale: true };
-    return { level: state.level, kind: state.kind, since: state.since, source: api.fallback ? "iot" : "api" };
+    return { level: state.level, kind: state.kind, since: state.since, source: api.source || (api.fallback ? "iot" : "api") };
   }
 
   async adminAlerts() {
@@ -533,26 +537,37 @@ export class Hub {
       if (meta.paused) return this.alertChanged();
       next = { paused: true, state: { level: "none" }, checkedAt: meta.checkedAt || null };
     } else {
-      try {
-        const result = await fetchState(this.env, meta.paused || meta.fallback ? null : meta);
+      // Both endpoints every minute: the full list for every kind of alert and place, the light
+      // one as a cross-check and as the backup when the full list fails.
+      const [main, iot] = await Promise.allSettled([
+        fetchState(this.env, meta.paused ? null : meta.main),
+        fetchIotState(this.env, meta),
+      ]);
+      const iotState = iot.status === "fulfilled" ? iot.value : null;
+      const iotError = iotState ? null : String((iot.reason && iot.reason.status) || "network");
+      if (main.status === "fulfilled") {
+        const result = main.value;
+        const combined = combine(result.state, iotState, meta.state);
         next = {
-          state: result.state,
-          lastModified: result.lastModified,
-          rules: RULES_VERSION,
+          state: combined.state,
+          source: combined.source,
+          main: { state: result.state, lastModified: result.lastModified, rules: RULES_VERSION },
+          iot: iotState ? iotState.level : null,
+          iotError,
+          disagreeSince: combined.disagree ? meta.disagreeSince || now : null,
           checkedAt: now,
           error: null,
           errorSince: null,
         };
         places = result.places;
-      } catch (error) {
-        const failed = { error: String(error.status || "network"), errorSince: meta.errorSince || now };
-        try {
-          // The main endpoint failed: the light backup one still tells whether Rivne has an air raid.
-          const state = await fetchIotState(this.env, meta);
-          next = { state, lastModified: null, checkedAt: now, fallback: true, ...failed };
-        } catch (backupError) {
+      } else {
+        const failed = { error: String(main.reason.status || "network"), errorSince: meta.errorSince || now };
+        if (iotState) {
+          // The full list failed: the light endpoint still tells whether Rivne has an air raid.
+          next = { state: iotState, source: "iot", fallback: true, main: null, iot: iotState.level, iotError, checkedAt: now, ...failed };
+        } else {
           // Nothing works: keep the last state. After ALERT_STALE_MS the TV stops showing it.
-          next = { ...meta, paused: false, ...failed };
+          next = { ...meta, paused: false, iotError, ...failed };
         }
       }
     }
@@ -561,7 +576,10 @@ export class Hub {
       !sameState(meta.state, next.state) ||
       (meta.error || null) !== (next.error || null) ||
       !!meta.fallback !== !!next.fallback ||
-      meta.rules !== next.rules ||
+      (meta.source || null) !== (next.source || null) ||
+      !!meta.disagreeSince !== !!next.disagreeSince ||
+      (meta.iotError || null) !== (next.iotError || null) ||
+      (meta.main && meta.main.rules) !== (next.main && next.main.rules) ||
       !!meta.paused !== !!next.paused ||
       now - (meta.writtenAt || 0) >= ALERT_META_WRITE_MS;
     if (changed) {
@@ -571,6 +589,15 @@ export class Hub {
     if (places && places.length) await this.rememberPlaces(places);
     await this.alertChanged();
     return { state: next.state, error: next.error || null };
+  }
+
+  // "Check now" on the settings page: what alerts.in.ua says this very moment.
+  async checkAlertsNow() {
+    if (!this.env.ALERTS_TOKEN) throw new HttpError(400, "no_alerts_token");
+    const now = Date.now();
+    if (now - (this.lastCheckAt || 0) < ALERT_CHECK_GAP_MS) throw new HttpError(429, "too_soon");
+    this.lastCheckAt = now;
+    return { report: await checkNow(this.env) };
   }
 
   // Place names in our oblast seen in alerts over the last week, for the settings page.

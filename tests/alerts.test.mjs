@@ -1,6 +1,6 @@
 // Run: node tests/alerts.test.mjs  (also runs in CI before every deploy)
 import assert from "node:assert";
-import { summarize, sameState, summarizeIot, oblastPlaces } from "../worker/src/alerts.js";
+import { summarize, sameState, summarizeIot, oblastPlaces, combine, oblastRecords } from "../worker/src/alerts.js";
 
 const alert = (over) => ({
   location_type: "oblast",
@@ -112,5 +112,26 @@ const seen = oblastPlaces([
   alert({ location_type: "city", location_uid: "905", location_title: "м. Дубно", finished_at: "2026-10-23T11:00:00.000Z" }),
 ]);
 assert.deepStrictEqual(seen.map((p) => [p.title, p.counted]), [["м. Рівне", true], ["Сарненський район", false]]);
+
+// Cross-check: the light endpoint wins only when it says more.
+const none = { level: "none" };
+const red = { level: "red", kind: "chemical", since: 1 };
+let c = combine(none, { level: "yellow", kind: "air_raid", since: 50 }, null);
+assert.deepStrictEqual([c.state.level, c.state.since, c.source, c.disagree], ["yellow", 50, "iot", true]);
+c = combine(none, { level: "yellow", kind: "air_raid", since: 90 }, { level: "yellow", since: 50 });
+assert.strictEqual(c.state.since, 50); // keeps the start time it already had
+c = combine(red, { level: "yellow", kind: "air_raid", since: 50 }, null);
+assert.deepStrictEqual([c.state, c.source, c.disagree], [red, "api", false]);
+c = combine({ level: "red", kind: "air_raid", since: 5 }, none, null); // e.g. a city-only alert
+assert.deepStrictEqual([c.state.level, c.disagree], ["red", false]);
+assert.strictEqual(combine(none, null, null).state, none); // light endpoint failed
+
+// Records for "check now".
+const rec = oblastRecords([
+  live({ location_title: "Рівненський район", location_uid: "112", location_oblast_uid: 112, threats: [{ source_message: "Дронова загроза (жовтий рівень)" }] }),
+  live({ location_title: "Сарненський район", location_uid: "113", location_oblast_uid: 113 }),
+  alert({ location_uid: "8", location_oblast_uid: "8", location_title: "Волинська область" }),
+]);
+assert.deepStrictEqual(rec.map((r) => [r.title, r.counted, r.threats.length]), [["Рівненський район", true, 1], ["Сарненський район", false, 0]]);
 
 console.log("alerts.js: all assertions passed");
