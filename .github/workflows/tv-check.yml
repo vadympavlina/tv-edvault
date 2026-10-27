@@ -1,0 +1,47 @@
+name: Check TV day start
+
+# Run by hand: opens the TV page in a real browser at night time, lets the schedule switch on by
+# itself two minutes later (with the real lb.itstep.org page) and takes a screenshot every 30 s.
+# Screenshots are uploaded as an artifact; the log shows what each frame says.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Hours that start in two minutes
+        run: |
+          on=$(TZ=Europe/Kyiv date -d '+2 min' +%H:%M)
+          off=$(TZ=Europe/Kyiv date -d '+60 min' +%H:%M)
+          echo "on $on, off $off"
+          jq -n --arg on "$on" --arg off "$off" \
+            '{days: (["mon","tue","wed","thu","fri","sat","sun"] | map({key: ., value: {enabled: true, on: $on, off: $off}}) | from_entries)}' > settings.json
+          printf 'window.TV_API_URL = "";\n' > api-url.js
+
+      - name: Install Playwright
+        run: |
+          mkdir -p /tmp/pw && cd /tmp/pw && npm init -y >/dev/null && npm i playwright@1.49.1 >/dev/null
+          npx playwright install --with-deps chromium >/dev/null
+
+      - name: Run
+        run: |
+          python3 -m http.server 8765 --bind 127.0.0.1 >/dev/null 2>&1 &
+          sleep 1
+          mkdir -p shots
+          cp .github/tv-check.mjs /tmp/pw/run.mjs
+          cd /tmp/pw && node run.mjs "$GITHUB_WORKSPACE/shots"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tv-screenshots
+          path: shots/
