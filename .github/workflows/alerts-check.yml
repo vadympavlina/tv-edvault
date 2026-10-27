@@ -13,6 +13,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     env:
+      TZ: Europe/Kyiv
       ALERTS_TOKEN: ${{ secrets.ALERTS_TOKEN }}
       TV_ADMIN_PASSWORD: ${{ secrets.TV_ADMIN_PASSWORD }}
       API: https://tv-edvault.vadym-pavlina.workers.dev
@@ -48,4 +49,9 @@ jobs:
           if [ -z "$token" ]; then echo "login failed"; exit 1; fi
           echo "::add-mask::$token"
           curl -sS "$API/admin" -H "Authorization: Bearer $token" \
-            | jq '{override, alerts: (.alerts | {configured, effective, manual, places, api, log: (.log[-10:])}), screens: [.screens[]? | {name, online, state}]}'
+            | jq '{override, alerts: (.alerts | {configured, effective, manual, places, api, log: (.log[-10:])}), screens: [.screens[]? | {name, online, state}]}' > admin.json || true
+          curl -sS "$API/admin" -H "Authorization: Bearer $token" > full.json
+          cat admin.json
+          echo "--- TV events, last 2 days (Kyiv time):"
+          jq -r '.screens[]? | "screen \(.id // "?") online=\(.online) state=\(.state) loadedAt=\(.loadedAt // "-")", (.events // [] | .[] | "  \((.at/1000) | strflocaltime("%m-%d %H:%M:%S")) \(.s) \(.stale // "")")' full.json
+          echo "--- settings:"; jq -c '.settings' full.json
