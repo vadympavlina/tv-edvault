@@ -17,11 +17,6 @@
   var NIGHT_HINT_MS = 5000;
   var PROBE_TIMEOUT_MS = 8000;
   var NET_RETRY_MS = 30 * 1000;
-  // Starting the day after a long black screen: begin it in a fresh copy of the app, and load
-  // the schedule once more a few minutes in. A schedule page opened by itself after a long night
-  // has been seen stuck on its own loader, while a fresh start worked.
-  var FRESH_DAY_AFTER_MS = 2 * 60 * 60 * 1000;
-  var EARLY_RELOAD_MS = 3 * 60 * 1000;
 
   var config = readConfig();
   // Inside the shell (index.html) fullscreen, keep-awake and restarts belong to it.
@@ -63,7 +58,6 @@
   var clockOffset = 0; // server time minus this TV's clock
   var knownReloadAt = null;
   var scheduleShownAt = 0;
-  var earlyReloadDone = true;
   var startedAt = Date.now();
 
   // ---------- Config ----------
@@ -359,7 +353,7 @@
     probing = true;
     reachable().then(function (ok) {
       probing = false;
-      if (!running || isNight) return;
+      if (!running) return;
       setWaiting(!ok);
       if (ok) startLoad();
       else if (activeFrame && config.refreshMinutes > 0) {
@@ -428,7 +422,7 @@
   }
 
   function showFrame(frame) {
-    if (pendingFrame !== frame || isNight) return;
+    if (pendingFrame !== frame) return;
     pendingFrame = null;
     var previous = activeFrame;
     activeFrame = frame;
@@ -448,48 +442,41 @@
     frame.src = "about:blank";
   }
 
-  function clearSchedule() {
-    clearTimeout(pendingTimer);
-    pendingFrame = null;
-    activeFrame = null;
-    frames.forEach(blank);
-  }
-
   // ---------- Day / night ----------
 
   function tick() {
     if (!running) return;
     keepAwake();
 
+    // The schedule stays loaded and keeps refreshing around the clock; "off" hours only cover
+    // it with the black screen. So the day starts by lifting the cover off a page that is
+    // already up to date: a schedule page opened by itself after a long night was seen stuck
+    // on its own loader.
     var day = isDaytime(now());
     if (!day && isNight !== true) {
       isNight = true;
       body.classList.add("is-night");
       startNightLogo();
-      clearSchedule();
       finishSplash();
       signalReady();
+      if (!activeFrame) loadSchedule();
     } else if (day && isNight !== false) {
-      var afterNight = isNight === true;
       isNight = false;
       stopNightLogo();
       dayStartedAt = Date.now();
-      earlyReloadDone = false;
-      // The shell loads a fresh copy under this one and swaps it in once its schedule shows;
-      // this copy carries on as usual in case the fresh one never gets ready.
-      if (afterNight && shell && shell.restartApp && Date.now() - startedAt > FRESH_DAY_AFTER_MS) shell.restartApp();
-      // Stay black until the fresh schedule is ready, then reveal it.
-      loadSchedule();
-      whenShown(function () {
+      if (activeFrame) {
         body.classList.remove("is-night");
-      });
-    } else if (day && !activeFrame) {
-      // Nothing on screen yet (no network so far): keep trying.
+      } else {
+        // Nothing loaded yet (no network so far, or a fresh start): stay black until it is.
+        loadSchedule();
+        whenShown(function () {
+          if (!isNight) body.classList.remove("is-night");
+        });
+      }
+    } else if (!activeFrame) {
+      // Nothing loaded yet (no network so far): keep trying.
       if (!pendingFrame && Date.now() - lastLoadAt >= NET_RETRY_MS) loadSchedule();
-    } else if (day && !earlyReloadDone && Date.now() - dayStartedAt >= EARLY_RELOAD_MS) {
-      earlyReloadDone = true;
-      loadSchedule();
-    } else if (day && config.refreshMinutes > 0) {
+    } else if (config.refreshMinutes > 0) {
       if (Date.now() - lastLoadAt >= config.refreshMinutes * 60 * 1000) loadSchedule();
     }
 
