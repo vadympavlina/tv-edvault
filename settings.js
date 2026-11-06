@@ -787,6 +787,8 @@
     var now = serverNow();
     var online = !!(screen && screen.online);
     var shown = !screen ? "none" : !online ? "offline" : screen.state;
+    // Under a minute of loading is normal; longer is worth a word.
+    var loading = online && screen.state === "schedule" && screen.view === "loading" && screen.viewAt && now - screen.viewAt > 60 * 1000;
 
     $("online-count").textContent = !screen ? "ТВ ще не підключено" : online ? "ТВ на зв'язку" : "ТВ не на зв'язку";
     $("online-pill").className = "pill" + (online && !screen.stale ? " is-ok" : screen ? " is-warning" : "");
@@ -802,8 +804,13 @@
       ? "не на зв'язку, востаннє " + ago(now - screen.lastSeen)
       : screen.stale && screen.state === "schedule"
       ? "розклад давно не оновлювався"
+      : loading
+      ? "на екрані заставка, розклад ще завантажується"
       : STATE_TEXT[screen.state] || STATE_TEXT.unknown;
-    $("tv-state").classList.toggle("is-warning", !!screen && (!online || !!screen.stale));
+    var healed = online && screen.healedAt && now - screen.healedAt < 30 * 60 * 1000;
+    if (healed) $("tv-state").textContent += " · сервер перезапустив ТВ о " + clockAt(screen.healedAt);
+    if (online && screen.error) $("tv-state").textContent += " · помилка в застосунку: " + screen.error;
+    $("tv-state").classList.toggle("is-warning", !!screen && (!online || !!screen.stale || loading || healed || !!screen.error));
 
     $("tv-loaded").textContent = screen && screen.loadedAt ? ago(now - screen.loadedAt) + " (" + stampText(screen.loadedAt) + ")" : "—";
     $("tv-uptime").textContent =

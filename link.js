@@ -78,8 +78,8 @@
         // The state rode along in the URL; report it again if it changed while connecting
         // (e.g. the app launched) or if the schedule is stuck.
         status = options.status();
-        if (status.state !== announced.state || status.stale || status.loadedAt) {
-          sendJson(socket, { type: "status", state: status.state, stale: status.stale, loadedAt: status.loadedAt });
+        if (status.state !== announced.state || status.stale || status.loadedAt || status.view !== "splash") {
+          sendJson(socket, statusMessage(status));
         }
         timers.ping = setInterval(function () {
           ping(socket);
@@ -143,6 +143,10 @@
       timers.retry = setTimeout(connect, delay);
     }
 
+    function statusMessage(s) {
+      return { type: "status", state: s.state, stale: s.stale, loadedAt: s.loadedAt, view: s.view || "", error: s.error || "" };
+    }
+
     function sendJson(socket, message) {
       if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
     }
@@ -200,9 +204,9 @@
       // Tell the server about a change in what the TV shows.
       status: function () {
         var s = options.status();
-        if (s.state === status.state && s.stale === status.stale && s.loadedAt === status.loadedAt) return;
+        if (s.state === status.state && s.stale === status.stale && s.loadedAt === status.loadedAt && s.view === status.view && s.error === status.error) return;
         status = s;
-        sendJson(ws, { type: "status", state: s.state, stale: s.stale, loadedAt: s.loadedAt });
+        sendJson(ws, statusMessage(s));
       },
     };
   }

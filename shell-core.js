@@ -34,6 +34,9 @@
   var lastFailAt = 0;
   var lastMinutes = null;
   var timers = [];
+  var deadChecks = 0;
+  var lastWatchdogAt = 0;
+  var activeSince = Date.now();
 
   // ---------- App frames ----------
 
@@ -80,6 +83,7 @@
     // Nobody has pressed "start" yet: a plain reload costs nothing.
     if (!app || !app.isRunning()) {
       active.src = appUrl(false, v || version);
+      activeSince = Date.now();
       if (v) version = v;
       return;
     }
@@ -105,6 +109,8 @@
     clearTimeout(pendingTimer);
     var old = active;
     active = pending;
+    activeSince = Date.now();
+    deadChecks = 0;
     pending = null;
     if (active.dataset.version) version = active.dataset.version;
     active.classList.remove("is-pending");
@@ -144,8 +150,22 @@
   }
 
   // Nightly restart: fire once when the clock passes `nightlyRestart`.
+  // The app inside must keep ticking (app.js). One that has stopped, or never came up, is
+  // replaced: a started one by a fresh copy swapped in underneath, an unstarted one by a plain
+  // reload. At most every 5 minutes, so a broken deploy cannot cause a reload loop.
+  function checkApp() {
+    var app = appOf(active);
+    var alive = app ? !app.alive || app.alive() : Date.now() - activeSince < 90 * 1000;
+    deadChecks = alive ? 0 : deadChecks + 1;
+    if (deadChecks < 2 || pending || Date.now() - lastWatchdogAt < 5 * 60 * 1000) return;
+    deadChecks = 0;
+    lastWatchdogAt = Date.now();
+    restartApp("watchdog");
+  }
+
   function checkClock() {
     shell.keepAwake();
+    checkApp();
     if (nightlyAt === null) return;
     var minutes = Schedule.now(config.timeZone).minutes;
     var prev = lastMinutes;

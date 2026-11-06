@@ -40,6 +40,12 @@ const HTTP_ONLINE_MS = 7 * 60 * 1000;
 const SWEEP_MS = 60 * 1000;
 const SCREEN_FORGET_MS = 30 * 24 * 60 * 60 * 1000;
 const STATES = ["schedule", "night", "splash"];
+const VIEWS = ["splash", "night", "loading", "schedule"];
+// A TV that says "schedule" but has not loaded it for this long, or that has shown the loading
+// logo for this long, is told to restart (once per HEAL_GAP_MS).
+const TV_STALE_MS = 25 * 60 * 1000;
+const TV_LOADING_MS = 4 * 60 * 1000;
+const TV_HEAL_GAP_MS = 20 * 60 * 1000;
 // Per-TV log of what it showed and when it was offline, for the 24-hour strip on the settings
 // page. Kept a little longer than shown so the strip always knows how the window began.
 const EVENTS_KEEP_MS = 48 * 60 * 60 * 1000;
@@ -141,6 +147,7 @@ export class Hub {
           await this.authorize(bearer(request));
           return json(await this.checkAlertsNow());
         case "POST /internal/alerts/poll":
+          await this.healTvs().catch((error) => console.error(error));
           return json(await this.pollAlerts());
         case "POST /screens/rename":
           await this.authorize(bearer(request));
@@ -213,6 +220,11 @@ export class Hub {
       if (STATES.includes(data.state)) screen.state = data.state;
       if (typeof data.stale === "boolean") screen.stale = data.stale;
       if (Number(data.loadedAt) > 0) screen.loadedAt = Number(data.loadedAt);
+      if (VIEWS.includes(data.view) && data.view !== screen.view) {
+        screen.view = data.view;
+        screen.viewAt = Date.now();
+      }
+      if (typeof data.error === "string") screen.error = cleanText(data.error, 120);
       screen.lastSeen = Date.now();
       ws.serializeAttachment(screen);
       await this.ctx.storage.put("screen:" + screen.id, screen);
@@ -220,6 +232,24 @@ export class Hub {
       await this.broadcastScreens();
     } else if (data.type === "time") {
       send(ws, { type: "time", serverTime: Date.now() });
+    }
+  }
+
+  // Every minute (cron): a TV that is online but visibly stuck gets a restart. The TV swaps in
+  // a fresh copy of its app without leaving fullscreen (app.js restart).
+  async healTvs() {
+    const now = Date.now();
+    for (const ws of this.ctx.getWebSockets("tv")) {
+      const screen = ws.deserializeAttachment();
+      if (!screen || screen.state !== "schedule") continue;
+      if (screen.healedAt && now - screen.healedAt < TV_HEAL_GAP_MS) continue;
+      const staleSchedule = screen.loadedAt && now - screen.loadedAt > TV_STALE_MS;
+      const stuckLoading = screen.view === "loading" && screen.viewAt && now - screen.viewAt > TV_LOADING_MS;
+      if (!staleSchedule && !stuckLoading) continue;
+      screen.healedAt = now;
+      ws.serializeAttachment(screen);
+      await this.ctx.storage.put("screen:" + screen.id, screen);
+      send(ws, { type: "restart" });
     }
   }
 

@@ -17,6 +17,10 @@
   var NIGHT_HINT_MS = 5000;
   var PROBE_TIMEOUT_MS = 8000;
   var NET_RETRY_MS = 30 * 1000;
+  // Self-checks (see "Watchdogs"): the schedule is loaded again this long before the day starts,
+  // and a schedule that stays stale gets a fresh copy of the app at most this often.
+  var PRELOAD_BEFORE_MS = 3 * 60 * 1000;
+  var SELF_HEAL_EVERY_MS = 30 * 60 * 1000;
 
   var config = readConfig();
   // Inside the shell (index.html) fullscreen, keep-awake and restarts belong to it.
@@ -58,6 +62,11 @@
   var clockOffset = 0; // server time minus this TV's clock
   var knownReloadAt = null;
   var scheduleShownAt = 0;
+  var launchedAt = 0;
+  var splashDoneAt = 0;
+  var lastTickAt = 0;
+  var lastHealAt = 0;
+  var lastError = "";
   var startedAt = Date.now();
 
   // ---------- Config ----------
@@ -176,9 +185,19 @@
       state: !running ? "splash" : isNight ? "night" : "schedule",
       stale: stale,
       loadedAt: scheduleShownAt, // when the schedule on screen was last (re)loaded
+      view: view(), // what is really on the screen, for the settings page and the server's watchdog
+      error: lastError,
       size: window.screen ? screen.width + "×" + screen.height : "",
       startedAt: startedAt,
     };
+  }
+
+  // What the person in front of the TV sees: "splash" (not started), "night" (black),
+  // "loading" (logo or black while the schedule loads) or "schedule".
+  function view() {
+    if (!running) return "splash";
+    if (isNight) return "night";
+    return activeFrame && splashDone ? "schedule" : "loading";
   }
 
   function setServerTime(serverTime) {
@@ -444,6 +463,51 @@
 
   // ---------- Day / night ----------
 
+  // ---------- Watchdogs ----------
+
+  // One failing step must not stop the beat: every tick is guarded, the error is remembered and
+  // reported (settings page), and the next tick tries again.
+  function safeTick() {
+    try {
+      tick();
+    } catch (e) {
+      lastError = String((e && e.message) || e).slice(0, 120);
+    }
+    lastTickAt = Date.now();
+  }
+
+  window.addEventListener("error", function (event) {
+    lastError = String(event && event.message).slice(0, 120);
+  });
+
+  // Checks that run on every tick and put right what could leave the screen stuck.
+  function watchdog() {
+    var nowMs = Date.now();
+    // 1. The splash must not outlive the start: after the grace period it goes, unless it is
+    //    the one saying "waiting for the network". Once gone it must really be gone.
+    if (!splashDone && !waitingNet && nowMs - launchedAt > SPLASH_MAX_WAIT_MS + TICK_MS) finishSplash();
+    if (splashDone && nowMs - splashDoneAt > 3000 && !splash.hidden) {
+      splash.classList.add("is-gone");
+      splash.hidden = true;
+    }
+    // 2. The black cover must not outlive the night.
+    if (!isNight && body.classList.contains("is-night") && !pendingFrame && (activeFrame || nowMs - dayStartedAt > LOAD_TIMEOUT_MS)) {
+      body.classList.remove("is-night");
+    }
+    // 3. A schedule that stays stale (nothing loaded for a long while): start over in a fresh
+    //    copy of the app, now and then.
+    if (stale && shell && shell.restartApp && nowMs - lastHealAt > SELF_HEAL_EVERY_MS) {
+      lastHealAt = nowMs;
+      shell.restartApp();
+    }
+    // 4. Just before the day starts, load the schedule again, so what appears is fresh.
+    if (isNight && activeFrame && !pendingFrame && !probing) {
+      var t = now();
+      var next = Schedule.nextChange(effective(), t, config.timeZone);
+      if (next !== null && next - t.ms <= PRELOAD_BEFORE_MS && nowMs - lastLoadAt > PRELOAD_BEFORE_MS + TICK_MS) loadSchedule();
+    }
+  }
+
   function tick() {
     if (!running) return;
     keepAwake();
@@ -486,6 +550,7 @@
     var lastGood = Math.max(scheduleShownAt, dayStartedAt);
     var limit = config.refreshMinutes > 0 ? Math.max(STALE_MIN_MS, 3 * config.refreshMinutes * 60 * 1000) : STALE_MIN_MS;
     stale = !isNight && (config.refreshMinutes > 0 || !activeFrame) && Date.now() - lastGood > limit;
+    watchdog();
     reportStatus();
     renderAlert();
   }
@@ -662,16 +727,19 @@
     button.disabled = true;
     body.classList.add("is-running");
 
+    launchedAt = Date.now();
     setTimeout(function () {
       if (!waitingNet) finishSplash(); // while waiting for the network the splash says so
     }, SPLASH_MAX_WAIT_MS);
-    tick();
-    setInterval(tick, TICK_MS);
+    // The beat is set up first, so even a first tick that fails cannot stop the others.
+    setInterval(safeTick, TICK_MS);
+    safeTick();
   }
 
   function finishSplash() {
     if (splashDone || !running) return;
     splashDone = true;
+    splashDoneAt = Date.now();
     splash.classList.add("is-gone");
     setTimeout(function () {
       splash.setAttribute("hidden", "");
@@ -739,6 +807,10 @@
     userInput: onUserInput,
     isRunning: function () {
       return running;
+    },
+    // False when a started app has stopped ticking: the shell then replaces it.
+    alive: function () {
+      return !running || Date.now() - lastTickAt < 4 * TICK_MS;
     },
   };
 
