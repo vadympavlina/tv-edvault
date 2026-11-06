@@ -755,6 +755,7 @@
   if (config.resume) {
     // A fresh copy swapped in by the shell: the old one was already running. Launch before
     // connecting, so the server never hears "splash" from it.
+    splash.classList.add("is-gone");
     splash.setAttribute("hidden", "");
     splashDone = true;
     launch();

@@ -171,6 +171,11 @@ body.is-night #night {
   color: rgba(255, 255, 255, 0.22);
 }
 
+/* Author styles such as #splash { display: flex } would otherwise beat the hidden attribute. */
+[hidden] {
+  display: none !important;
+}
+
 /* ---------- Splash ---------- */
 
 #splash {
